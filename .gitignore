@@ -1,0 +1,9 @@
+.DS_Store
+.python-version
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+Frameworks/
+Packages/
+qqsdk/
+weibosdk/
+swiftui-introspect-main/

@@ -1,0 +1,14 @@
+//
+//  Config.xcconfig
+//  StrawberryPlayer
+//
+//  Created by penghui zhang on 2026/3/5.
+//
+
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+
+
+MUREKA_API_KEY = op_mmdc0u49S9p2zC7qHtQHWkFoEHRMr51
+
+DEEPSEEK_API_KEY = sk-1869c88dd4424ecdbebc03df1d3092a5
