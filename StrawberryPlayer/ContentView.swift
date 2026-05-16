@@ -9,7 +9,7 @@ struct ContentView: View {
     @StateObject private var lyricsService = LyricsService()
     @StateObject private var virtualArtistService = VirtualArtistService()
     @StateObject private var deepLinkHandler = DeepLinkHandler.shared
-
+    
     @State private var isTabBarHidden = false
     @EnvironmentObject var tabSelection: TabSelection
     @State private var isLoginPresented = false
@@ -20,7 +20,7 @@ struct ContentView: View {
     
     // 在 ContentView 中添加状态变量
     @State private var isPresentingFullPlayer = false
-        
+    
     
     init() {
         let appearance = UITabBarAppearance()
@@ -142,12 +142,12 @@ struct ContentView: View {
             checkNetworkPermission()
             
             // ✅ 在这里插入冷启动链接处理代码
-                if let url = deepLinkHandler.pendingURL {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        playbackService.handleUniversalLink(url: url)
-                        deepLinkHandler.pendingURL = nil
-                    }
+            if let url = deepLinkHandler.pendingURL {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    playbackService.handleUniversalLink(url: url)
+                    deepLinkHandler.pendingURL = nil
                 }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .handleIncomingURL)) { notification in
             if let url = notification.object as? URL {
@@ -195,8 +195,10 @@ struct ContentView: View {
                     .tag(2)
                     .environmentObject(userService)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)  // ✅ 强制填满屏幕
             .toolbar(isTabBarHidden ? .hidden : .visible, for: .tabBar)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             Task { await libraryService.loadAISongsFromServer() }
             MiniPlayerWindow.configure(
@@ -205,13 +207,6 @@ struct ContentView: View {
                     .environmentObject(lyricsService)
                     .environmentObject(userService)
             )
-            
-            // ✅ 保留：UI就绪后，若当前已是全屏模式，立即弹出
-//            if playbackService.playerUIMode == .full {
-//                presentFullPlayerWithRetry(attempt: 0)
-//            }
-            
-            
         }
         .onChange(of: playbackService.playerUIMode) { newMode in
             if newMode != .full {
@@ -260,9 +255,8 @@ struct ContentView: View {
     }
     
     
-
-    // 修改 presentFullPlayerWithRetry 方法
-    private func presentFullPlayerWithRetry(attempt: Int) {
+    private func presentFullPlayerWithRetry(attempt: Int = 0) {
+        // 最多重试 3 次
         guard attempt < 3 else {
             print("❌ 全屏播放器弹出失败，已达最大重试次数")
             playbackService.playerUIMode = .mini
@@ -274,7 +268,20 @@ struct ContentView: View {
         guard !isPresentingFullPlayer else { return }
         isPresentingFullPlayer = true
         
+        // 设置超时保护：2 秒后强制重置标志
+        let timeoutWork = DispatchWorkItem {
+            if self.isPresentingFullPlayer {
+                print("⚠️ 弹出全屏超时，强制重置标志")
+                self.isPresentingFullPlayer = false
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: timeoutWork)
+        
         getRootViewControllerAsync { rootVC in
+            timeoutWork.cancel()
+            
+            guard self.isPresentingFullPlayer else { return }
+            
             guard let rootVC = rootVC else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     self.isPresentingFullPlayer = false
@@ -313,53 +320,7 @@ struct ContentView: View {
             }
         }
     }
-
-
-    // 弹出全屏播放器（已修复 weak 问题）
-//    private func presentFullPlayerWithRetry(attempt: Int) {
-//        guard attempt < 8 else {
-//            print("❌ 全屏播放器弹出失败，已达最大重试次数")
-//            return
-//        }
-//
-//        guard playbackService.playerUIMode == .full else { return }
-//
-//        getRootViewControllerAsync { rootVC in
-//            guard let rootVC = rootVC else {
-//                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-//                    self.presentFullPlayerWithRetry(attempt: attempt + 1)
-//                }
-//                return
-//            }
-//
-//            if self.isFullPlayerAlreadyPresented(rootVC: rootVC) {
-//                print("⚠️ 全屏播放器已存在，取消重复弹出")
-//                return
-//            }
-//
-//            let topVC = rootVC.topMostViewController()
-//            guard topVC.presentedViewController == nil,
-//                  !topVC.isBeingPresented,
-//                  !topVC.isBeingDismissed else {
-//                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 * Double(attempt + 1)) {
-//                    self.presentFullPlayerWithRetry(attempt: attempt + 1)
-//                }
-//                return
-//            }
-//
-//            let fullPlayerView = FullPlayerView(isTabBarHidden: self.$isTabBarHidden)
-//                .environmentObject(self.playbackService)
-//                .environmentObject(self.lyricsService)
-//                .environmentObject(self.userService)
-//            let hostingController = UIHostingController(rootView: fullPlayerView)
-//            hostingController.modalPresentationStyle = .fullScreen
-//
-//            print("🎬 弹出全屏播放器 (attempt \(attempt))")
-//            topVC.present(hostingController, animated: true)
-//        }
-//    }
     
-    // 辅助方法：递归检查是否已存在 FullPlayerView
     private func isFullPlayerAlreadyPresented(rootVC: UIViewController) -> Bool {
         if rootVC is UIHostingController<FullPlayerView> {
             return true

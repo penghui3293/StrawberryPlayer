@@ -56,9 +56,11 @@ struct MiniPlayerView: View {
                     .frame(width: 56, height: 56)
                     .contentShape(Circle())
                     .onTapGesture {
-                        playbackService.setPlayerUIMode(.full)
+                        // 延迟 0.1 秒，避免与 dismiss 动画冲突
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            playbackService.setPlayerUIMode(.full)
+                        }
                     }
-                    
                     // 关闭按钮（增大点击区域）
                     Image(systemName: "xmark")
                         .font(.system(size: 16, weight: .medium))
@@ -69,9 +71,7 @@ struct MiniPlayerView: View {
                         .frame(width: 40, height: 40)  // 固定按钮区域
                         .contentShape(Circle())
                         .onTapGesture {
-                            //                            playbackService.stop()
                             playbackService.setPlayerUIMode(.hidden)
-                            // 可选：如果需要停止播放，则调用 stop()
                             playbackService.stop()
                         }
                 }
