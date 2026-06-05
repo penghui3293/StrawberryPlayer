@@ -37,6 +37,12 @@ class LyricsService: ObservableObject {
     
     @Published var wordLyrics: [[WordLyrics]] = [] {
         didSet {
+            print("🔄 [LyricsService] wordLyrics 变化 | 旧值行数: \(oldValue.count) | 新值行数: \(wordLyrics.count) | 线程: \(Thread.isMainThread ? "主线程" : "后台线程")")
+        #if DEBUG
+        if oldValue.count == wordLyrics.count {
+            print("⚠️ 内容相同但触发了 didSet")
+        }
+        #endif
             if !Thread.isMainThread {
                 print("❌ wordLyrics 在后台线程被修改")
                 Thread.callStackSymbols.forEach { print($0) }
@@ -61,6 +67,8 @@ class LyricsService: ObservableObject {
     }
     @Published var isLoading = false {
         didSet {
+            print("🔄 [LyricsService] isLoading 变化: \(oldValue) -> \(isLoading)")
+
             if !Thread.isMainThread {
                 print("❌ isLoading 在后台线程被修改")
                 Thread.callStackSymbols.forEach { print($0) }
@@ -85,6 +93,8 @@ class LyricsService: ObservableObject {
     }
     @Published var currentLyricIndex: Int = 0 {
         didSet {
+//            print("🔄 [LyricsService] currentLyricIndex 变化: \(oldValue) -> \(currentLyricIndex)")
+
             if !Thread.isMainThread {
                 print("❌ currentLyricIndex 在后台线程被修改")
                 Thread.callStackSymbols.forEach { print($0) }
@@ -142,7 +152,28 @@ class LyricsService: ObservableObject {
     private let throttleInterval: TimeInterval = 0.08  // 60fps，也可直接注释节流逻辑
     
     private var isLoadingFetch = false
+    private var noLyricsSongIds = Set<String>()
     
+    
+//    @Published var translatedLyrics: String?
+//    @Published var translatedLines: [String] = []
+//    @Published var translatedWordLyrics: [[WordLyrics]] = []
+    
+    @Published var translatedWordLyrics: [[WordLyrics]] = [] {
+        didSet {
+            print("🔄 [LyricsService] translatedWordLyrics 变化 | 旧值行数: \(oldValue.count) | 新值行数: \(translatedWordLyrics.count)")
+        }
+    }
+    @Published var translatedLyrics: String? = nil {
+        didSet {
+            print("🔄 [LyricsService] translatedLyrics 变化 | 旧长度: \(oldValue?.count ?? 0) | 新长度: \(translatedLyrics?.count ?? 0)")
+        }
+    }
+    @Published var translatedLines: [String] = [] {
+        didSet {
+            print("🔄 [LyricsService] translatedLines 变化 | 旧行数: \(oldValue.count) | 新行数: \(translatedLines.count)")
+        }
+    }
     
     let parsedWordLyricsCache: NSCache<NSString, NSArray> = {
         let cache = NSCache<NSString, NSArray>()
@@ -166,6 +197,10 @@ class LyricsService: ObservableObject {
         networkFetchTask = nil
         isLoadingFetch = false
         currentLoadingSongId = nil
+    }
+    
+    func hasNoLyrics(for songId: String) -> Bool {
+        return noLyricsSongIds.contains(songId)
     }
     
     func pauseDriver() {
@@ -265,36 +300,43 @@ class LyricsService: ObservableObject {
     }
     
     func fetchLyrics(for song: Song, songDuration: TimeInterval = 0) {
+        print("📝 [fetchLyrics] 开始 | songId: \(song.id) | 歌名: \(song.title) | hasTranslatedLyrics: \(song.translatedLyrics != nil) | hasTranslatedWordLyrics: \(song.translatedWordLyrics != nil)")
+        
+        if noLyricsSongIds.contains(song.id) {
+                print("📝 [fetchLyrics] 跳过，已知无歌词: \(song.id)")
+                return
+            }
+
         var song = song
         
         // 避免重复加载
         if let loadingId = currentLoadingSongId, loadingId == song.id { return }
-
+        
         // 如果已有同首歌歌词且未在加载中，更新进度并通知
         if currentSongId == song.id, !wordLyrics.isEmpty, currentLoadingSongId == nil {
             updateCurrentIndex(with: currentPlaybackTime)
             return
         }
-
-
+        
+        
         if currentSongId == song.id, !lyrics.isEmpty, !wordLyrics.isEmpty {
             updateCurrentIndex(with: currentPlaybackTime)
             return
         }
-
+        
         // 1. 全局缓存
         if let cached = parsedWordLyricsCache.object(forKey: song.id as NSString) as? [[WordLyrics]],
            !cached.isEmpty, isWordLyricsValid(cached) {
-            applyWordLyricsAndNotify(cached, songId: song.id)
+            applyWordLyricsAndNotify(cached, songId: song.id, translatedLyrics: song.translatedLyrics, translatedWordLyricsString: song.translatedWordLyrics)
             return
         }
-
+        
         // 2. 内存缓存
         if let cached = song.cachedWordLyrics, !cached.isEmpty, isWordLyricsValid(cached) {
-            applyWordLyricsAndNotify(cached, songId: song.id)
+            applyWordLyricsAndNotify(cached, songId: song.id, translatedLyrics: song.translatedLyrics, translatedWordLyricsString: song.translatedWordLyrics)
             return
         }
-
+        
         // 3. 开始加载
         currentLoadingSongId = song.id
         currentSongId = song.id
@@ -304,7 +346,7 @@ class LyricsService: ObservableObject {
             self.currentLyricIndex = 0
             self.isLoading = true
         }
-
+        
         let isClassical = song.style?.lowercased() == "古典" || song.virtualArtistId == nil
         let hasNoLyricsData = song.lyrics == nil && song.wordLyrics == nil
         if isClassical && hasNoLyricsData {
@@ -312,15 +354,16 @@ class LyricsService: ObservableObject {
                 self.lyrics = []
                 self.wordLyrics = []
                 self.isLoading = false
+                self.noLyricsSongIds.insert(song.id)   // ✅ 新增
                 NotificationCenter.default.post(name: .lyricsDidUpdate, object: song.id)
             }
             return
         }
-
+        
         // 4. 异步解析
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-
+            
             if let wordLyricsString = song.wordLyrics, !wordLyricsString.isEmpty,
                let wordData = wordLyricsString.data(using: .utf8) {
                 do {
@@ -331,7 +374,7 @@ class LyricsService: ObservableObject {
                         self.parsedWordLyricsCache.setObject(words as NSArray, forKey: song.id as NSString)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             guard self.currentLoadingSongId == song.id else { return }
-                            self.applyWordLyricsAndNotify(words, songId: song.id)
+                            self.applyWordLyricsAndNotify(words, songId: song.id, translatedLyrics: song.translatedLyrics, translatedWordLyricsString: song.translatedWordLyrics)
                         }
                         return
                     }
@@ -355,7 +398,7 @@ class LyricsService: ObservableObject {
                     }
                 }
             }
-
+            
             // LRC 文本
             if let lyricsText = song.lyrics, !lyricsText.isEmpty {
                 let parsed = self.parseLRC(lyricsText)
@@ -364,6 +407,25 @@ class LyricsService: ObservableObject {
                         guard self.currentLoadingSongId == song.id else { return }
                         self.lyrics = parsed
                         self.wordLyrics = []
+                        
+                        
+                        // ✅ 设置翻译
+                        if let trans = song.translatedLyrics, !trans.isEmpty {
+                            self.translatedLyrics = trans
+                            self.translatedLines = trans.components(separatedBy: .newlines).filter { !$0.isEmpty }
+                        } else {
+                            self.translatedLyrics = nil
+                            self.translatedLines = []
+                        }
+                        
+                        // ✅ 新增：加载翻译逐字时间戳
+                        if let transWordData = song.translatedWordLyrics?.data(using: .utf8),
+                           let decoded = try? JSONDecoder().decode([[WordLyrics]].self, from: transWordData) {
+                            self.translatedWordLyrics = decoded
+                        } else {
+                            self.translatedWordLyrics = []
+                        }
+                        
                         self.isLoading = false
                         self.currentLoadingSongId = nil
                         NotificationCenter.default.post(name: .lyricsDidUpdate, object: song.id)
@@ -381,6 +443,24 @@ class LyricsService: ObservableObject {
                         guard self.currentLoadingSongId == song.id else { return }
                         self.lyrics = lyricLines
                         self.wordLyrics = []
+                        
+                        // ✅ 设置翻译
+                        if let trans = song.translatedLyrics, !trans.isEmpty {
+                            self.translatedLyrics = trans
+                            self.translatedLines = trans.components(separatedBy: .newlines).filter { !$0.isEmpty }
+                        } else {
+                            self.translatedLyrics = nil
+                            self.translatedLines = []
+                        }
+                        
+                        // ✅ 新增：加载翻译逐字时间戳
+                        if let transWordData = song.translatedWordLyrics?.data(using: .utf8),
+                           let decoded = try? JSONDecoder().decode([[WordLyrics]].self, from: transWordData) {
+                            self.translatedWordLyrics = decoded
+                        } else {
+                            self.translatedWordLyrics = []
+                        }
+                        
                         self.isLoading = false
                         self.currentLoadingSongId = nil
                         NotificationCenter.default.post(name: .lyricsDidUpdate, object: song.id)
@@ -388,25 +468,49 @@ class LyricsService: ObservableObject {
                     return
                 }
             }
-
+            
             DispatchQueue.main.async {
                 guard self.currentLoadingSongId == song.id else { return }
                 self.performNetworkFetch(for: song, songDuration: songDuration)
             }
         }
+        
+        print("📝 [fetchLyrics] 结束 | isLoading: \(isLoading) | wordLyrics行数: \(wordLyrics.count)")
+
     }
     
-    private func applyWordLyricsAndNotify(_ wordLyrics2D: [[WordLyrics]], songId: String) {
+    
+    private func applyWordLyricsAndNotify(_ wordLyrics2D: [[WordLyrics]], songId: String, translatedLyrics: String? = nil, translatedWordLyricsString: String? = nil) {
+        print("📝 [applyWordLyricsAndNotify] 开始 | songId: \(songId) | wordLyrics2D行数: \(wordLyrics2D.count) | 传入翻译文本: \(translatedLyrics != nil) | 传入翻译逐字: \(translatedWordLyricsString != nil)")
+
         DispatchQueue.main.async {
             self.lyricOffset = 0
             self.wordLyrics = wordLyrics2D
             self.precomputeProgressMetadata()
-            // ✅ 同步填充 lyrics 数组，保证控制中心等依赖方可用
             self.lyrics = wordLyrics2D.enumerated().map { index, words in
                 let lineText = words.map { $0.word }.joined()
                 let startTime = words.first?.startTime ?? 0
                 let endTime = words.last?.endTime ?? (index + 1 < wordLyrics2D.count ? wordLyrics2D[index+1].first?.startTime : nil)
                 return LyricLine(startTime: startTime, endTime: endTime, text: lineText, words: words)
+            }
+            
+            
+            
+            // 设置翻译
+            if let trans = translatedLyrics, !trans.isEmpty {
+                self.translatedLyrics = trans
+                self.translatedLines = trans.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            } else {
+                self.translatedLyrics = nil
+                self.translatedLines = []
+            }
+            
+            // ✅ 新增：加载翻译逐字时间戳
+            if let transWordData = translatedWordLyricsString?.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([[WordLyrics]].self, from: transWordData) {
+                self.translatedWordLyrics = decoded
+            } else {
+                self.translatedWordLyrics = []
             }
             self.isLoading = false
             self.currentLoadingSongId = nil
@@ -415,6 +519,8 @@ class LyricsService: ObservableObject {
             self.objectWillChange.send()
             NotificationCenter.default.post(name: .lyricsDidUpdate, object: songId)
         }
+        print("📝 [applyWordLyricsAndNotify] 完成 | wordLyrics行数: \(self.wordLyrics.count) | translatedWordLyrics行数: \(self.translatedWordLyrics.count)")
+
     }
     
     private func fallbackToLRCParsing(lyricsText: String, song: Song) {
@@ -539,7 +645,7 @@ class LyricsService: ObservableObject {
                 try Task.checkCancellation()   // ✅ 关键：检查取消状态
                 await MainActor.run {
                     guard self.currentLoadingSongId == song.id else { return}
-                    self.parseLyrics(lyricsText, songDuration: songDuration, for: song.id)
+                    self.parseLyrics(lyricsText, songDuration: songDuration, for: song.id,song: song)
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -562,7 +668,7 @@ class LyricsService: ObservableObject {
     
     
     // MARK: - 解析网络返回的歌词文本
-    private func parseLyrics(_ text: String, songDuration: TimeInterval, for songId: String) {
+    private func parseLyrics(_ text: String, songDuration: TimeInterval, for songId: String, song: Song) {
         let wordLines = LyricsParser.parseWordLyrics(content: text, songDuration: songDuration)
         
         if !wordLines.isEmpty {
@@ -579,6 +685,34 @@ class LyricsService: ObservableObject {
                     let endTime: TimeInterval? = (index + 1 < wordLines.count) ? wordLines[index + 1].first?.startTime : words.last?.endTime
                     return LyricLine(startTime: startTime, endTime: endTime, text: cleanedText, words: words)
                 }
+                
+                
+                
+                // ✅ 翻译设置放在这里
+                if let trans = song.translatedLyrics, !trans.isEmpty {
+                    print("📝 [parseLyrics] 设置翻译文本 | 长度: \(trans.count)")
+
+                    self.translatedLyrics = trans
+                    self.translatedLines = trans.components(separatedBy: .newlines).filter { !$0.isEmpty }
+                } else {
+                    print("📝 [parseLyrics] 无翻译文本")
+
+                    self.translatedLyrics = nil
+                    self.translatedLines = []
+                }
+                
+                // ✅ 新增：加载翻译逐字时间戳
+                if let transWordData = song.translatedWordLyrics?.data(using: .utf8),
+                   let decoded = try? JSONDecoder().decode([[WordLyrics]].self, from: transWordData) {
+                    print("📝 [parseLyrics] 设置翻译逐字歌词 | 行数: \(decoded.count)")
+
+                    self.translatedWordLyrics = decoded
+                } else {
+                    print("📝 [parseLyrics] 无翻译逐字歌词")
+
+                    self.translatedWordLyrics = []
+                }
+                
                 self.updateCurrentIndex(with: self.currentPlaybackTime)
                 print("✅ 网络歌词解析为逐词格式，行数: \(self.wordLyrics.count)")
                 self.objectWillChange.send()
@@ -596,18 +730,43 @@ class LyricsService: ObservableObject {
                                   words: line.words)
                     }
                     self.wordLyrics = []
+                    
+                    
+                    
+                    // ✅ 翻译设置放在这里
+                    if let trans = song.translatedLyrics, !trans.isEmpty {
+                        self.translatedLyrics = trans
+                        self.translatedLines = trans.components(separatedBy: .newlines).filter { !$0.isEmpty }
+                    } else {
+                        self.translatedLyrics = nil
+                        self.translatedLines = []
+                    }
+                    
+                    // ✅ 新增：加载翻译逐字时间戳
+                    if let transWordData = song.translatedWordLyrics?.data(using: .utf8),
+                       let decoded = try? JSONDecoder().decode([[WordLyrics]].self, from: transWordData) {
+                        self.translatedWordLyrics = decoded
+                    } else {
+                        self.translatedWordLyrics = []
+                    }
+                    
                     self.updateCurrentIndex(with: self.currentPlaybackTime)
                     print("✅ 网络歌词解析为传统格式，行数: \(self.lyrics.count)")
                     self.objectWillChange.send()
                     
                     NotificationCenter.default.post(name: .lyricsDidUpdate, object: songId)
-
+                    
                 }
             } else {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.currentLoadingSongId == songId else { return }
                     self.lyrics = []
                     self.wordLyrics = []
+                    self.noLyricsSongIds.insert(song.id)      // ✅ 新增
+
+                    self.translatedLyrics = nil
+                    self.translatedLines = []
+                    self.translatedWordLyrics = []
                     print("❌ 网络歌词解析失败")
                 }
             }
@@ -646,12 +805,12 @@ class LyricsService: ObservableObject {
     func updateCurrentIndex(with time: TimeInterval) {
         guard !isDriverPaused else { return }
         
+        let adjustedTime = time + lyricOffset
+        
         // ✅ 节流：每 0.1 秒最多执行一次，避免高频调用导致内存飙升
         let now = CACurrentMediaTime()
         guard now - throttleTime >= throttleInterval else { return }
         throttleTime = now
-        
-        let adjustedTime = time + lyricOffset
         
         if !wordLyrics.isEmpty {
             var newLineIndex = currentLyricIndex
@@ -859,6 +1018,7 @@ class LyricsService: ObservableObject {
         
         // 强制取消仍可能存在的全局网络任务
         URLSession.shared.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+        
     }
     
     
@@ -1136,7 +1296,6 @@ extension LyricsService {
     
     /// 应用逐字歌词到 UI 状态
     private func applyWordLyrics(_ wordLyrics2D: [[WordLyrics]], songId: String) {
-        //        self.wordLyrics = wordLyrics2D
         applyWordLyricsIfChanged(wordLyrics2D)
         self.precomputeProgressMetadata()   // ✅ 新增
         

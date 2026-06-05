@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 struct ArtistProfileView: View {
@@ -12,21 +11,20 @@ struct ArtistProfileView: View {
     
     @State private var isFollowed = false
     @State private var followerCount: Int
-    
+    @State private var refreshFlag = 0          // ✅ 强制刷新标志
+
     @State private var showDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
     @State private var showDeleteSongConfirmation = false
     @State private var songToDelete: Song?
     @State private var showAIGenerate = false
         
+    // ✅ 优化：直接使用字符串比较，避免 UUID 转换失败导致歌曲不显示
     private var songs: [Song] {
         libraryService.songs.filter { song in
-            // 将 artist.id (String) 转换为 UUID，与 song.virtualArtistId 比较
-            guard let vid = song.virtualArtistId,
-                  let artistUUID = UUID(uuidString: artist.id) else {
-                return false
-            }
-            return vid == artistUUID
+            guard let vid = song.virtualArtistId else { return false }
+            // 将艺人的 UUID 字符串与歌曲的 virtualArtistId 字符串直接比较
+            return vid.uuidString == artist.id
         }
     }
     
@@ -102,31 +100,6 @@ struct ArtistProfileView: View {
             
             // 作品列表
             Section(header: Text("作品").font(.title3).fontWeight(.bold).padding(.horizontal)) {
-//                ForEach(songs) { song in
-//                    HStack {
-//                        Text(song.title)
-//                            .foregroundColor(.primary)
-//                        Spacer()
-//                        Text(formatDuration(song.duration))
-//                            .font(.caption)
-//                            .foregroundColor(.secondary)
-//                    }
-//                    .padding(.horizontal)
-//                    .padding(.vertical, 8)
-//                    .onTapGesture {
-//                        playSong(song)
-//                    }
-//                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-//                        Button(role: .destructive) {
-//                            deleteSong(song)
-//                        } label: {
-//                            Label("删除", systemImage: "trash")
-//                        }
-//                    }
-//                }
-                
-                // 在 ArtistProfileView.swift 中，替换作品列表的 ForEach 内容为以下代码：
-
                 ForEach(songs) { song in
                     SongRowWithMetrics(song: song, playbackService: playbackService, lyricsService: lyricsService) {
                         playSong(song)
@@ -141,6 +114,7 @@ struct ArtistProfileView: View {
                 }
             }
         }
+        .id(refreshFlag)   // ✅ 当 refreshFlag 变化时，强制重建整个 List
         .listStyle(.plain)
         .navigationTitle(artist.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -165,14 +139,17 @@ struct ArtistProfileView: View {
                 .environmentObject(playbackService)
         }
         .onAppear {
+            print("🎤 当前艺人 ID: \(artist.id)")
             playbackService.setAllowMiniPlayer(true)
             loadArtistDetails()
         }
         .onDisappear {
             playbackService.setAllowMiniPlayer(false)
         }
+        // ✅ 监听歌曲库变化，重新加载艺人信息（songs 作为计算属性会自动刷新）
         .onReceive(NotificationCenter.default.publisher(for: .songsDidChange)) { _ in
-            loadArtistDetails()   // ✅ 刷新粉丝数等艺人信息
+            loadArtistDetails()      // 刷新粉丝数等艺人信息
+            refreshFlag += 1         // ✅ 触发视图强制刷新，立即显示新歌曲
         }
         .alert("删除失败", isPresented: $showDeleteErrorAlert) {
             Button("确定", role: .cancel) { }
@@ -279,6 +256,7 @@ struct ArtistProfileView: View {
     }
 }
 
+// SongRowWithMetrics 保持不变（无需修改）
 struct SongRowWithMetrics: View {
     let song: Song
     let playbackService: PlaybackService

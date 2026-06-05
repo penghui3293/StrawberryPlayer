@@ -12,6 +12,8 @@ struct ReferenceArtist: Codable, Identifiable {
     let themeGuidance: String?   // 新增
     let sortOrder: Int?
     let gender: String?   // "male" 或 "female"，可选
+    let voiceModelId: String?
+
 
 }
 
@@ -23,7 +25,9 @@ struct ReferenceSong: Codable, Identifiable {
     let theme: String
     let lyrics: String?          // 新增：歌词参考文本
     let imageryHint: String?     // 新增：意象提示（映射 imagery_hint）
-    
+    let musicStyle: String?   // 新增
+    let duration: TimeInterval      // ✅ 新增，单位秒
+
     
     // 计算属性，保持与原有 UI 代码兼容（使用 coverURL）
     var coverURL: URL? {

@@ -10,11 +10,19 @@ struct WordByWordLyricsView: View {
     @State private var currentLineWords: [WordLyrics] = []
     @State private var nextLineText: String = ""
     
-    // 容器宽度与高度缓存（自适应横竖屏）
     @State private var containerWidth: CGFloat = max(UIScreen.main.bounds.width - 32, 1)
     @State private var cachedLineHeight: CGFloat = 0
     @State private var cachedLineWords: [WordLyrics] = []
     
+    // 判断是否为英文歌曲（通过翻译数据是否存在）
+    
+    private var isEnglishSong: Bool {
+        let result = lyricsService.translatedLyrics != nil && !lyricsService.translatedLyrics!.isEmpty
+        if result {
+//            print("🎤 [WordByWord] 检测为英文歌曲，有翻译")
+        }
+        return result
+    }
     
     var body: some View {
         let inactiveColor: Color = playbackService.accentColor == .clear
@@ -32,6 +40,7 @@ struct WordByWordLyricsView: View {
             } else if !currentLineWords.isEmpty {
                 let height = cachedLineHeight
                 
+                // 当前行英文高亮
                 LyricHighlightLayerView(
                     words: currentLineWords,
                     currentTime: playbackService.currentTime + lyricsService.lyricOffset,
@@ -43,6 +52,35 @@ struct WordByWordLyricsView: View {
                 .frame(width: containerWidth, height: height)
                 .padding(.horizontal, 16)
                 .onTapGesture { onTap?() }
+                
+                // 英文歌曲：显示中文翻译（当前行）
+                if isEnglishSong {
+                    if !lyricsService.translatedWordLyrics.isEmpty,
+                       lyricsService.currentLyricIndex >= 0,
+                       lyricsService.currentLyricIndex < lyricsService.translatedWordLyrics.count {
+                        let translatedWords = lyricsService.translatedWordLyrics[lyricsService.currentLyricIndex]
+                        let translatedHeight = LyricHighlightLayer.computeHeight(words: translatedWords, fontSize: 14, containerWidth: containerWidth)
+                        LyricHighlightLayerView(
+                            words: translatedWords,
+                            currentTime: playbackService.currentTime + lyricsService.lyricOffset,
+                            activeColor: .white,
+                            inactiveColor: inactiveColor,  // 与英文歌词使用相同的不活跃颜色
+                            fontSize: 18,                  // ✅ 改为 18，与英文一致
+                            containerWidth: containerWidth
+                        )
+                        .frame(width: containerWidth, height: translatedHeight)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                    } else if let transLine = lyricsService.translatedLines[safe: lyricsService.currentLyricIndex] {
+                        // 降级：静态翻译文本
+                        Text(transLine)
+                            .font(.system(size: 18))        // ✅ 改为 18
+                            .foregroundColor(inactiveColor) // ✅ 与英文歌词保持一致
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                    }
+                }
+                
             } else {
                 let color = playbackService.accentColor == .clear
                 ? Color.white.opacity(0.6)
@@ -53,7 +91,8 @@ struct WordByWordLyricsView: View {
                     .padding(.horizontal, 16)
             }
             
-            if !nextLineText.isEmpty {
+            // 中文歌曲：显示下一行预览；英文歌曲不显示
+            if !isEnglishSong && !nextLineText.isEmpty {
                 Text(nextLineText)
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(inactiveColor)
@@ -74,13 +113,9 @@ struct WordByWordLyricsView: View {
             }
         )
         .onAppear {
-            // 强制更新一次索引（基于当前播放时间）
-//            let currentTime = playbackService.currentTime + lyricsService.lyricOffset
-//            lyricsService.updateCurrentIndex(with: currentTime)
             syncWithCurrentLine()
         }
-        .onReceive(playbackService.$currentSong) { _ in
-            // 切歌时强制刷新容器宽度，防止偏移
+        .onReceive(playbackService.$currentSong) {newIndex in
             let newWidth = max(UIScreen.main.bounds.width - 32, 1)
             if newWidth != containerWidth {
                 containerWidth = newWidth
@@ -88,31 +123,50 @@ struct WordByWordLyricsView: View {
                     cachedLineHeight = LyricHighlightLayer.computeHeight(words: currentLineWords, fontSize: 18, containerWidth: containerWidth)
                 }
             }
-            // ✅ 切歌时重置标志，以便新歌显示时重新定位
             syncWithCurrentLine()
         }
-        .onReceive(lyricsService.$currentLyricIndex) { _ in syncWithCurrentLine() }
-        .onReceive(lyricsService.$wordLyrics) { _ in syncWithCurrentLine() }
-        .onReceive(lyricsService.$currentSongId) { _ in syncWithCurrentLine() }
+        .onReceive(lyricsService.$wordLyrics) { newValue in
+            print("🖥️ [WordByWord] 收到 wordLyrics 变化 | 新值行数: \(newValue.count)")
+            syncWithCurrentLine()
+        }
+        .onReceive(lyricsService.$translatedWordLyrics) { newValue in
+            print("🖥️ [WordByWord] 收到 translatedWordLyrics 变化 | 新值行数: \(newValue.count)")
+            syncWithCurrentLine()
+        }
+        .onReceive(lyricsService.$translatedLines) { newValue in
+            print("🖥️ [WordByWord] 收到 translatedLines 变化 | 新值行数: \(newValue.count)")
+            syncWithCurrentLine()
+        }
+        .onReceive(lyricsService.$currentLyricIndex) { newIndex in
+            print("🖥️ [WordByWord] 收到 currentLyricIndex 变化: \(newIndex)")
+            syncWithCurrentLine()
+        }
+        .onReceive(lyricsService.$currentSongId) { newIndex in
+            syncWithCurrentLine()
+        }
     }
     
     private func updateContainerWidth(_ newWidth: CGFloat) {
         let width = max(newWidth, 1)
         guard width != containerWidth else { return }
         containerWidth = width
-        // 宽度变化时重新计算当前行高度
         if !currentLineWords.isEmpty {
-            cachedLineHeight = LyricHighlightLayer.computeHeight(
-                words: currentLineWords, fontSize: 18, containerWidth: containerWidth
-            )
+            cachedLineHeight = LyricHighlightLayer.computeHeight(words: currentLineWords, fontSize: 18, containerWidth: containerWidth)
         }
     }
     
-
     private func syncWithCurrentLine() {
+        print("🖥️ [WordByWord] syncWithCurrentLine 调用 | isLoading: \(lyricsService.isLoading) | wordLyrics行数: \(lyricsService.wordLyrics.count) | currentLyricIndex: \(lyricsService.currentLyricIndex)")
+        if lyricsService.isLoading {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.syncWithCurrentLine()
+            }
+            return
+        }
+        
         if lyricsService.wordLyrics.isEmpty,
            let currentSong = playbackService.currentSong,
-           lyricsService.currentSongId == currentSong.id {
+           !lyricsService.hasNoLyrics(for: currentSong.id) {   // ✅ 新增条件
             lyricsService.fetchLyrics(for: currentSong)
             return
         }
@@ -123,7 +177,6 @@ struct WordByWordLyricsView: View {
             return
         }
         
-        // ✅ 关键修复：实时根据当前播放时间计算索引，避免依赖可能旧的 currentLyricIndex
         let currentTime = playbackService.currentTime + lyricsService.lyricOffset
         let wordLyrics = lyricsService.wordLyrics
         var idx = 0
@@ -135,10 +188,8 @@ struct WordByWordLyricsView: View {
                 break
             }
         }
-        // 边界保护
         idx = max(0, min(idx, wordLyrics.count - 1))
         
-        // 更新 lyricsService 的 currentLyricIndex（保持与外部同步，但不再依赖它）
         if lyricsService.currentLyricIndex != idx {
             lyricsService.currentLyricIndex = idx
         }
@@ -153,55 +204,10 @@ struct WordByWordLyricsView: View {
         if currentLineWords.map(\.id) != newWords.map(\.id) {
             currentLineWords = newWords
             cachedLineWords = newWords
-            cachedLineHeight = LyricHighlightLayer.computeHeight(
-                words: newWords, fontSize: 18, containerWidth: containerWidth
-            )
+            cachedLineHeight = LyricHighlightLayer.computeHeight(words: newWords, fontSize: 18, containerWidth: containerWidth)
         }
         
         let nextIdx = idx + 1
-        nextLineText = (nextIdx < wordLyrics.count)
-            ? wordLyrics[nextIdx].map(\.word).joined() : ""
+        nextLineText = (nextIdx < wordLyrics.count) ? wordLyrics[nextIdx].map(\.word).joined() : ""
     }
-    
-//    private func syncWithCurrentLine() {
-//        if lyricsService.wordLyrics.isEmpty,
-//           let currentSong = playbackService.currentSong,
-//           lyricsService.currentSongId == currentSong.id {
-//            lyricsService.fetchLyrics(for: currentSong)
-//            return
-//        }
-//        
-//        guard !lyricsService.wordLyrics.isEmpty else {
-//            currentLineWords = []
-//            nextLineText = ""
-//            return
-//        }
-//        
-//        // ✅ 首次显示时强制根据当前时间更新索引
-//        if !hasInitializedPosition {
-//            let currentTime = playbackService.currentTime + lyricsService.lyricOffset
-//            lyricsService.updateCurrentIndex(with: currentTime)
-//            hasInitializedPosition = true
-//        }
-//        
-//        let idx = max(0, min(lyricsService.currentLyricIndex, lyricsService.wordLyrics.count - 1))
-//        guard idx < lyricsService.wordLyrics.count else {
-//            currentLineWords = []
-//            nextLineText = ""
-//            return
-//        }
-//        
-//        let newWords = lyricsService.wordLyrics[idx]
-//        if currentLineWords.map(\.id) != newWords.map(\.id) {
-//            currentLineWords = newWords
-//            cachedLineWords = newWords
-//            cachedLineHeight = LyricHighlightLayer.computeHeight(
-//                words: newWords, fontSize: 18, containerWidth: containerWidth
-//            )
-//        }
-//        
-//        let nextIdx = idx + 1
-//        nextLineText = (nextIdx < lyricsService.wordLyrics.count)
-//        ? lyricsService.wordLyrics[nextIdx].map(\.word).joined() : ""
-//    }
 }

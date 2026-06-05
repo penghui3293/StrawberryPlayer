@@ -136,11 +136,15 @@ class NowPlayingService: NSObject {
             return .success
         }
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.playbackService?.playNext() }
+            DispatchQueue.main.async {
+                self?.playbackService?.playNext(manual: true)
+            }
             return .success
         }
         commandCenter.previousTrackCommand.addTarget { [weak self] _ in
-            DispatchQueue.main.async { self?.playbackService?.playPrevious() }
+            DispatchQueue.main.async {
+                self?.playbackService?.playPrevious(manual: true)
+            }
             return .success
         }
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in

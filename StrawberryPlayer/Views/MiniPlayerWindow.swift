@@ -21,12 +21,30 @@ class MiniPlayerWindow: UIWindow {
         fatalError("init(coder:) has not been implemented")
     }
     
+//    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+//        guard let rootView = rootViewController?.view else { return false }
+//        let localPoint = rootView.convert(point, from: self)
+//        let hitView = rootView.hitTest(localPoint, with: event)
+//        return hitView != nil && hitView != rootView
+//    }
+    
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        guard let rootView = rootViewController?.view else { return false }
+        print("🪟 [MiniPlayerWindow] point(inside:) 被调用, point: \(point), event type: \(event?.type.rawValue ?? -1)")
+        
+        guard let rootView = rootViewController?.view else {
+            print("⚠️ [MiniPlayerWindow] rootView 为 nil，返回 false")
+            return false
+        }
+        
         let localPoint = rootView.convert(point, from: self)
         let hitView = rootView.hitTest(localPoint, with: event)
-        return hitView != nil && hitView != rootView
+        let shouldHit = hitView != nil && hitView != rootView
+        
+        let hitViewDescription = hitView != nil ? String(describing: type(of: hitView!)) : "nil"
+        print("🪟 [MiniPlayerWindow] localPoint: \(localPoint), hitView: \(hitViewDescription), shouldHit: \(shouldHit)")
+        return shouldHit
     }
+    
     
     func updateFrame() {
         let screenBounds = UIScreen.main.bounds

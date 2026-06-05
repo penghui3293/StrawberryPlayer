@@ -1,31 +1,3 @@
-//// VirtualArtist.swift
-//import Foundation
-//
-//struct VirtualArtist: Identifiable, Codable {
-//    let id: String
-//    let name: String
-//    let avatarURL: URL?
-//    let voiceModelId: String?
-//    let bio: String?                     // 改为可选
-//    let genre: String
-//    let createdBy: String
-//    let createdAt: Date
-//    var songCount: Int
-//    var followerCount: Int
-//
-//}
-//extension VirtualArtist {
-//    var fullAvatarURL: URL? {
-//        guard let urlString = avatarURL?.absoluteString else { return nil }
-//        if urlString.hasPrefix("http://") || urlString.hasPrefix("https://") {
-//            return avatarURL
-//        }
-//        let base = AppConfig.baseURL
-//        let fullString = base.hasSuffix("/") ? base + urlString.dropFirst() : base + urlString
-//        return URL(string: fullString)
-//    }
-//}
-
 import Foundation
 
 struct VirtualArtist: Identifiable, Codable {
@@ -39,6 +11,9 @@ struct VirtualArtist: Identifiable, Codable {
     let createdAt: Date
     var songCount: Int
     var followerCount: Int
+    let language: String?
+    let gender: String?   // ✅ 新增："male", "female", "neutral" 或 nil
+
 }
 
 extension VirtualArtist {

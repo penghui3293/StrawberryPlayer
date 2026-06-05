@@ -26,7 +26,7 @@ class ShareManager: NSObject {
         tencentOAuth = TencentOAuth(appId: qqAppID, andUniversalLink: AppConfig.baseURL + "/", andDelegate: self)
     }
     
-    // MARK: - 分享入口
+    // MARK: - 分享入口（带安装检查）
     func share(to platform: SharePlatform,
                text: String,
                image: UIImage?,
@@ -35,8 +35,34 @@ class ShareManager: NSObject {
         
         currentCompletion = completion
         switch platform {
-        case .weibo: shareToWeibo(text: text, image: image, url: url)
-        case .qq:    shareToQQ(text: text, image: image, url: url)
+        case .weibo:
+            shareToWeibo(text: text, image: image, url: url)
+        case .qq:
+            // ✅ 先检查 QQ 是否安装
+            if !isQQInstalled() {
+                showAlert(message: "请安装最新版手机QQ后再试")
+                completion(false)
+                return
+            }
+            shareToQQ(text: text, image: image, url: url)
+        }
+    }
+    
+    // MARK: - 检查 QQ 安装
+    private func isQQInstalled() -> Bool {
+        // 两种方式：URL Scheme 或 TencentOAuth 方法
+        guard let qqURL = URL(string: "mqqapi://") else { return false }
+        return UIApplication.shared.canOpenURL(qqURL)
+    }
+    
+    // MARK: - 显示自定义提示（避免使用 SDK 内部 alert）
+    private func showAlert(message: String) {
+        DispatchQueue.main.async {
+            guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let window = scene.windows.first(where: { $0.isKeyWindow }) else { return }
+            let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "确定", style: .default))
+            window.rootViewController?.present(alert, animated: true)
         }
     }
     
@@ -90,14 +116,61 @@ class ShareManager: NSObject {
         )
         let req = SendMessageToQQReq(content: newsObj)
         
-        // ✅ 直接发送，SDK 会在代理中回调结果
-        QQApiInterface.send(req)
+        // ✅ 正确判断枚举值
+        let sendResult = QQApiInterface.send(req)
+        if sendResult != .EQQAPISENDSUCESS {
+            print("❌ QQ 分享发送失败，错误码：\(sendResult.rawValue)")
+            currentCompletion?(false)
+        } else {
+            print("✅ QQ 分享请求已发送，等待回调结果")
+            // 等待 onResp 回调，不立即调用 completion
+        }
     }
     
-    // MARK: - 回调处理
+    // MARK: - QQ 分享
+//    private func shareToQQ(text: String, image: UIImage?, url: String?) {
+//        guard let shareURL = URL(string: url ?? "") else {
+//            currentCompletion?(false)
+//            return
+//        }
+//        
+//        let previewData = image?.jpegData(compressionQuality: 0.4)
+//        let newsObj = QQApiNewsObject(
+//            url: shareURL,
+//            title: text,
+//            description: "快来听听这首歌",
+//            previewImageData: previewData,
+//            targetContentType: .news
+//        )
+//        let req = SendMessageToQQReq(content: newsObj)
+//        
+//        // ✅ 正确调用方式：直接发送，无 scene 参数
+//        let sendResult = QQApiInterface.send(req)
+//        
+//        if sendResult != 0 {
+//            print("❌ QQ 分享发送失败，错误码：\(sendResult)")
+//            currentCompletion?(false)
+//        } else {
+//            print("✅ QQ 分享请求已发送，等待回调结果")
+//            // 等待 onResp 回调，不立即调用 completion
+//        }
+//        
+//        // ✅ 直接发送，SDK 会在代理中回调结果
+//        //        QQApiInterface.send(req)
+//    }
+    
+    // MARK: - 处理回调（AppDelegate 中调用）
     func handleOpenURL(_ url: URL) -> Bool {
-        if WeiboSDK.handleOpen(url, delegate: self) { return true }
-        if QQApiInterface.handleOpen(url, delegate: self) { return true }
+        if WeiboSDK.handleOpen(url, delegate: self) {
+            return true
+        }
+        if QQApiInterface.handleOpen(url, delegate: self) {
+            return true
+        }
+        // TencentOAuth 回调可能需要单独处理，但通常 QQApiInterface 已覆盖
+        if TencentOAuth.handleOpen(url) {
+            return true
+        }
         return false
     }
     func cleanupTencent() { tencentOAuth = nil }
@@ -118,11 +191,15 @@ extension ShareManager: WeiboSDKDelegate {
 
 // MARK: - QQ代理
 extension ShareManager: QQApiInterfaceDelegate {
-    func onReq(_ req: QQBaseReq!) {}
+    func onReq(_ req: QQBaseReq!) {
+        // 处理 QQ 发来的请求（如分享前查询应用信息）
+        print("📨 QQ 发来请求: \(String(describing: req))")
+    }
     
     func onResp(_ resp: QQBaseResp!) {
         if let sendResp = resp as? SendMessageToQQResp {
             let success = (sendResp.result == "0")
+            print("📤 QQ 分享回调: result=\(sendResp.result ?? "nil"), errorDescription=\(sendResp.errorDescription ?? "nil")")
             currentCompletion?(success)
         }
     }
@@ -130,7 +207,7 @@ extension ShareManager: QQApiInterfaceDelegate {
     func isOnlineResponse(_ response: [AnyHashable : Any]!) {}
 }
 
-// 👇 新增这一块
+// MARK: - TencentSessionDelegate（仅用于可能的登录回调，非必须）
 extension ShareManager: TencentSessionDelegate {
     func tencentDidLogin() {}
     func tencentDidNotLogin(_ cancelled: Bool) {}

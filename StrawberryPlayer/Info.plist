@@ -40,6 +40,7 @@
 			<string>qq</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+                <string>QQ1903885818</string>   <!-- 例如 QQ1903885818 -->
 				<string>tencent1903885818</string>
 			</array>
 		</dict>
@@ -70,8 +71,8 @@
 	<string>$(FAL_API_KEY)</string>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
+        <string>mqq</string>
 		<string>mqqapi</string>
-		<string>mqq</string>
 		<string>mqqOpensdkSSoLogin</string>
 		<string>mqqconnect</string>
 		<string>mqqopensdkapiV3</string>

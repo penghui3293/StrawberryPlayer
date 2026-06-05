@@ -222,6 +222,11 @@ class PlaybackService: ObservableObject {
     @Published var lastHandledSongId: String?
     @Published var lastHandledTime: Date = .distantPast
     
+    private var durationSubscription: AnyCancellable?
+    private var endOfSongToken: AnyCancellable?
+    private var lastEndHandledSongId: String = ""
+    private var lastEndHandledTime: TimeInterval = 0
+    
     // 专门下载封面，不参与切歌时的 cancel，保证主色提取
     private let coverDownloadSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -278,14 +283,24 @@ class PlaybackService: ObservableObject {
     }
     
     func setPlayerUIMode(_ mode: PlayerUIMode) {
-        // 切换全屏时，强制清除紧凑模式标志
+        print("🎮 [PlaybackService] setPlayerUIMode: \(mode) (当前: \(playerUIMode))")
+        
         if mode == .full {
             forceCompactOnNextOpen = false
         }
         
-        // 直接设置目标模式，不做中间状态切换
         playerUIMode = mode
         
+    }
+    
+    private func handlePlaybackEnded() {
+        // 模拟 onEnd 逻辑，但避开 suppressAutoNext 检查
+        guard !isSwitchingSong, !isPlayingNext else { return }
+        if playbackMode == .loopOne {
+            playNext()
+        } else if !suppressAutoNext {
+            playNext()
+        }
     }
     
     
@@ -728,13 +743,13 @@ class PlaybackService: ObservableObject {
                 let (_, response) = try await dataSession.data(for: request)
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
                     // 成功后重新拉取准确计数
-//                    await MainActor.run { self.fetchShareCount(for: song) }
-
+                    //                    await MainActor.run { self.fetchShareCount(for: song) }
+                    
                     let newCount = (SongMetricsCache.shared.get(songId: song.stableId)?.shares ?? 0) + 1
-                        SongMetricsCache.shared.set(songId: song.stableId, shares: newCount)
-                        if self.currentSong?.stableId == song.stableId {
-                            await MainActor.run { self.shareCount = newCount }
-                        }
+                    SongMetricsCache.shared.set(songId: song.stableId, shares: newCount)
+                    if self.currentSong?.stableId == song.stableId {
+                        await MainActor.run { self.shareCount = newCount }
+                    }
                     
                 }
             } catch {
@@ -929,11 +944,11 @@ class PlaybackService: ObservableObject {
                     
                     // ✅ 新增：更新评论计数缓存
                     // 更新评论计数缓存
-                        let currentComments = SongMetricsCache.shared.get(songId: song.stableId)?.comments ?? 0
-                        SongMetricsCache.shared.set(songId: song.stableId, comments: currentComments + 1)
-                        if self.currentSong?.stableId == song.stableId {
-                            self.commentCount = currentComments + 1   // ✅ 直接赋值，已在主线程
-                        }
+                    let currentComments = SongMetricsCache.shared.get(songId: song.stableId)?.comments ?? 0
+                    SongMetricsCache.shared.set(songId: song.stableId, comments: currentComments + 1)
+                    if self.currentSong?.stableId == song.stableId {
+                        self.commentCount = currentComments + 1   // ✅ 直接赋值，已在主线程
+                    }
                     
                     completion(.success(comment))
                 } catch {
@@ -1109,6 +1124,27 @@ class PlaybackService: ObservableObject {
         }
         notificationObservers.append(songsDidChangeObserver)
         
+        
+
+        // 在 init 中合适位置添加
+        endOfSongToken = core.$currentTime
+            .combineLatest(core.$duration, core.$isPlaying)
+            .sink { [weak self] currentTime, duration, isPlaying in
+                guard let self = self, isPlaying, duration > 0 else { return }
+                // 防重复触发：记录最近处理的歌曲 id 和时间
+                let songId = self.currentSong?.id ?? ""
+                let now = Date().timeIntervalSince1970
+                if now - self.lastEndHandledTime < 1.0 && self.lastEndHandledSongId == songId { return }
+                
+                if currentTime >= duration - 0.3 {
+                    self.lastEndHandledSongId = songId
+                    self.lastEndHandledTime = now
+                    // 主动调用播放结束处理
+                    self.handlePlaybackEnded()
+                }
+            }
+        
+        
         // 启动时清理过期的音频缓存
         DispatchQueue.global(qos: .background).async { [weak self] in
             self?.cleanupAudioCacheIfNeeded()
@@ -1228,68 +1264,6 @@ class PlaybackService: ObservableObject {
             }
         }
         
-        //        let interruptionObserver = NotificationCenter.default.addObserver(
-        //            forName: AVAudioSession.interruptionNotification,
-        //            object: nil,
-        //            queue: .main
-        //        ) { [weak self] notification in
-        //            guard let self = self,
-        //                  let userInfo = notification.userInfo,
-        //                  let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-        //                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
-        //
-        //            if type == .began {
-        //                print("🔇 音频中断开始")
-        //                self.wasPlayingBeforeInterruption = self.isPlaying
-        //                self.isInterrupted = true
-        //                self.suppressAutoNext = true
-        //                self.core.pause()
-        //
-        //            } else if type == .ended {
-        //                print("🔊 音频中断结束")
-        //
-        //                // 重新激活音频会话
-        //                do {
-        //                    try AVAudioSession.sharedInstance().setActive(true)
-        //                    print("✅ 中断后会话重新激活成功")
-        //                } catch {
-        //                    print("❌ 中断后会话激活失败: \(error)")
-        //                    self.wasPlayingBeforeInterruption = false
-        //                    self.isInterrupted = false
-        //                    self.suppressAutoNext = false
-        //                    return
-        //                }
-        //
-        //                // 检查是否需要恢复播放
-        //                let shouldResume = self.wasPlayingBeforeInterruption &&
-        //                self.currentSong != nil &&
-        //                !self.isLoadingSong &&
-        //                !self.isSwitchingSong &&
-        //                !self.isPerformingSkip
-        //
-        //                if shouldResume {
-        //                    let songId = self.currentSong?.stableId
-        //                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-        //                        if self.currentSong?.stableId == songId,
-        //                           !self.isLoadingSong,
-        //                           !self.isSwitchingSong {
-        //                            self.core.play()
-        //                            self.isPlaying = true
-        //                            print("🎵 中断后恢复播放: \(self.currentSong?.title ?? "")")
-        //                        }
-        //                        // 恢复播放后立即允许切歌，不再延迟
-        //                        self.suppressAutoNext = false
-        //                    }
-        //                } else {
-        //                    print("⚠️ 不满足恢复条件，不自动播放")
-        //                    self.suppressAutoNext = false
-        //                }
-        //
-        //                // 重置中断标志
-        //                self.wasPlayingBeforeInterruption = false
-        //                self.isInterrupted = false
-        //            }
-        //        }
         notificationObservers.append(interruptionObserver)
     }
     
@@ -1532,16 +1506,34 @@ class PlaybackService: ObservableObject {
             currentCommentTask?.cancel()
             currentCommentTask = nil
             
-            // 获取收藏/评论数
+            // ✅ 先设置默认值，不阻塞播放
+            await MainActor.run {
+                self.likeCount = 0
+                self.commentCount = 0
+            }
+            
+            // ✅ 延迟获取收藏/评论数，不阻塞播放任务
             if let userService = self.userService, userService.isLoggedIn {
-                self.fetchLikeCount(for: song)
-                self.fetchCommentCount(for: song)
-            } else {
-                await MainActor.run {
-                    self.likeCount = 0
-                    self.commentCount = 0
+                Task.detached(priority: .background) { [weak self] in
+                    guard let self = self else { return }
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await MainActor.run {
+                        self.fetchLikeCount(for: song)
+                        self.fetchCommentCount(for: song)
+                    }
                 }
             }
+            
+            // 获取收藏/评论数
+            //            if let userService = self.userService, userService.isLoggedIn {
+            //                self.fetchLikeCount(for: song)
+            //                self.fetchCommentCount(for: song)
+            //            } else {
+            //                await MainActor.run {
+            //                    self.likeCount = 0
+            //                    self.commentCount = 0
+            //                }
+            //            }
             
             if Task.isCancelled { return }
             
@@ -1563,6 +1555,7 @@ class PlaybackService: ObservableObject {
             }
             
             // ─── 音频 URL 解析 ───
+            // 获取远程播放 URL
             let playURL: URL
             if let streamStr = song.streamURL, let sURL = absoluteURL(from: streamStr) {
                 print("🎵 使用后端转码链接: \(sURL)")
@@ -1578,27 +1571,29 @@ class PlaybackService: ObservableObject {
                 }
                 return
             }
-            
-            // ✅ 构造本地缓存路径，优先使用本地文件
+
             let localURL = PlaybackService.localAudioURL(for: song.id, extension: playURL.pathExtension)
-            let finalPlayURL: URL          // 仍然声明为 let，但确保所有路径赋值
-            
-            
-            // 增加关键判断：如果 playURL 已经是本地文件，直接使用
-            if playURL.isFileURL {
-                finalPlayURL = playURL
-                print("📁 使用本地音频文件: \(finalPlayURL.path)")
-            } else if FileManager.default.fileExists(atPath: localURL.path) {
+            let finalPlayURL: URL
+
+            // 优先使用有效本地缓存
+            if FileManager.default.fileExists(atPath: localURL.path) && validateAudioFile(url: localURL) {
                 finalPlayURL = localURL
-                print("💾 命中本地缓存: \(localURL)")
+                print("💾 使用有效本地缓存: \(localURL.path)")
             } else {
-                print("🎧 本地无缓存，直接流播: \(playURL.absoluteString)")
-                finalPlayURL = playURL   // 直接使用远程 URL
-                // 后台静默下载（不阻塞播放）
+                finalPlayURL = playURL
+                print("🎧 使用远程播放: \(finalPlayURL.absoluteString)")
+                // 后台静默下载/重试（不阻塞当前播放）
                 if !playURL.isFileURL {
-                    downloadInBackground(from: playURL, to: localURL, for: song.id)
+                    Task {
+                        do {
+                            _ = try await VirtualArtistService.shared.downloadSongToLocal(song)
+                        } catch {
+                            print("后台下载/验证失败: \(error)")
+                        }
+                    }
                 }
             }
+            
             
             // 统一更新歌曲的 audioUrl（只需要执行一次）
             await MainActor.run {
@@ -1637,19 +1632,20 @@ class PlaybackService: ObservableObject {
                             DispatchQueue.main.async {
                                 guard let self = self,
                                       self.loadToken == token,
-                                      !self.suppressAutoNext,
                                       !self.isSwitchingSong,
                                       !self.isPlayingNext else { return }
-                                self.playNext()
+                                
+                                // 单曲循环模式下，自动结束不检查 suppressAutoNext
+                                if self.playbackMode == .loopOne {
+                                    self.playNext()
+                                } else {
+                                    guard !self.suppressAutoNext else { return }
+                                    self.playNext()
+                                }
                             }
                         },
                         onReady: { [weak self] in
                             guard let self = self,self.loadToken == token else { return }
-                            
-                            // ✅ 确保音频会话激活（stop可能已将其停用）
-                            //                            if !self.isAudioSessionActive {
-                            //                                self.setupAudioSession()
-                            //                            }
                             
                             if self.lyricsService.wordLyrics.isEmpty {
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -1665,11 +1661,23 @@ class PlaybackService: ObservableObject {
                         }
                     )
                     print("💾 [加载到PlayerCore后] 内存: \(String(format: "%.1f", currentMemoryInMB())) MB")
+                    
+                    // ✅ 立即尝试播放，并设置重试（不依赖 duration）
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                        guard let self = self, self.loadToken == token else { return }
+                        self.ensureAudioSessionIsActive()
+                        if !self.core.isPlaying && self.currentSong != nil {
+                            self.core.play()
+                            print("▶️ [立即播放] 尝试播放")
+                        }
+                    }
+                    
                 } catch {
                     print("❌ 加载歌曲失败: \(error)")
                     self.pause()
                 }
             }
+            
         }
     }
     
@@ -1890,8 +1898,7 @@ class PlaybackService: ObservableObject {
         return true
     }
     
-    // 2. 修改 playNext/playPrevious
-    func playNext() {
+    func playNext(manual: Bool = false) {
         guard !suppressAutoNext, !isPerformingSkip, !isPlayingNext else {
             print("⚠️ playNext 被抑制或已在执行")
             return
@@ -1910,7 +1917,6 @@ class PlaybackService: ObservableObject {
         isPerformingSkip = true
         defer { isPerformingSkip = false }
         
-        print("🎬 [playNext] 调用栈: \(Thread.callStackSymbols.prefix(5).joined(separator: "\n"))")
         guard canSwitchSong() else { return }
         guard !songs.isEmpty, !isLoadingSong else { return }
         
@@ -1919,7 +1925,12 @@ class PlaybackService: ObservableObject {
         case .sequential:
             nextIndex = (currentIndex + 1) % songs.count
         case .loopOne:
-            nextIndex = currentIndex
+            // 手动滑动时强制切歌，否则重复当前歌
+            if manual && songs.count > 1 {
+                nextIndex = (currentIndex + 1) % songs.count
+            } else {
+                nextIndex = currentIndex
+            }
         }
         
         if nextIndex == currentIndex && playbackMode == .sequential && songs.count == 1 {
@@ -1934,7 +1945,7 @@ class PlaybackService: ObservableObject {
         playSong(at: nextIndex)
     }
     
-    func playPrevious() {
+    func playPrevious(manual: Bool = false) {
         guard !suppressAutoNext else {
             print("⏸️ 自动切歌被抑制")
             return
@@ -1955,7 +1966,11 @@ class PlaybackService: ObservableObject {
         case .sequential:
             prevIndex = (currentIndex - 1 + songs.count) % songs.count
         case .loopOne:
-            prevIndex = currentIndex
+            if manual && songs.count > 1 {
+                prevIndex = (currentIndex - 1 + songs.count) % songs.count
+            } else {
+                prevIndex = currentIndex
+            }
         }
         
         if prevIndex == currentIndex && playbackMode == .sequential && songs.count == 1 {
@@ -2480,13 +2495,11 @@ extension PlaybackService {
 
 
 extension PlaybackService {
-    
-    // 原方法仅返回固定的 .flac 路径，现改为可传入扩展名
     static func localAudioURL(for songId: String, extension ext: String? = nil) -> URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioDir = docs.appendingPathComponent("DownloadedSongs")
         try? FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-        let fileName = ext != nil ? "\(songId).\(ext!)" : songId
+        let fileName = ext != nil ? "\(songId).\(ext!)" : "\(songId)"
         return audioDir.appendingPathComponent(fileName)
     }
     
@@ -2511,6 +2524,15 @@ extension PlaybackService {
             self.currentIndex = index
         }
     }
+    
+    private func validateAudioFile(url: URL) -> Bool {
+        do {
+            let audioFile = try AVAudioFile(forReading: url)
+            return audioFile.length > 0
+        } catch {
+            return false
+        }
+    }
 }
 extension PlaybackService {
     func forceRecalibrateLyrics() {
@@ -2527,6 +2549,7 @@ extension PlaybackService {
             )
         }
     }
+    
 }
 
 // MARK: - 统一认证请求（含自动静默刷新与重试）

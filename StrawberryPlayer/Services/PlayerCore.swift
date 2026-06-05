@@ -25,7 +25,11 @@ class PlayerCore: ObservableObject {
             return Double(playerTime.sampleTime) >= totalSamples - sampleRate * 0.1
         } else {
             guard let player = audioPlayer else { return false }
-            return player.currentTime >= player.duration - 0.1
+            let isAtEnd = player.currentTime >= player.duration - 0.1
+
+            print("🔍 [isAtEnd] currentTime: \(player.currentTime), duration: \(player.duration), isAtEnd: \(isAtEnd)")
+
+            return isAtEnd
         }
     }
     
@@ -167,16 +171,23 @@ class PlayerCore: ObservableObject {
         currentOnEnd = onEnd
         onEndHandler = onEnd
         
+        print("🎯 [PlayerCore.load] URL: \(url.absoluteString)")
+        print("🎯 [PlayerCore.load] scheme: \(url.scheme ?? "nil"), isFileURL: \(url.isFileURL)")
+        
         
         // ✅ 远程流播：HTTP/HTTPS 直接播放，不等下载
         if url.scheme == "https" || url.scheme == "http" {
+            print("🎯 [PlayerCore.load] → 走 loadRemote 路径")
             loadRemote(url: url, onEnd: onEnd, onReady: onReady)
             return
         }
         
+        print("🎯 [PlayerCore.load] enableEffects = \(enableEffects)")
         if enableEffects {
+            print("🎯 [PlayerCore.load] → 走 loadWithEngine 路径（enableEffects=true）")
             loadWithEngine(url: url, onEnd: onEnd, onReady: onReady)
         } else {
+            print("🎯 [PlayerCore.load] → 走 loadWithPlayer 路径（enableEffects=false）")
             loadWithPlayer(url: url, onEnd: onEnd, onReady: onReady)
         }
         
@@ -220,8 +231,14 @@ class PlayerCore: ObservableObject {
     }
     
     private func loadWithPlayer(url: URL, onEnd: @escaping () -> Void, onReady: (() -> Void)?) {
+        print("🎵 [loadWithPlayer] 开始加载: \(url.lastPathComponent)")
+
         do {
             let player = try AVAudioPlayer(contentsOf: url)
+            print("✅ [loadWithPlayer] 成功创建 AVAudioPlayer")
+                    print("   - duration: \(player.duration)")
+                    print("   - numberOfChannels: \(player.numberOfChannels)")
+                    print("   - format: \(player.format)")
             player.prepareToPlay()
             let delegate = PlayerDelegate(onEnd: onEnd)   // ✅ 先创建
             self.playerDelegate = delegate                // ✅ 强引用防止释放
@@ -234,17 +251,27 @@ class PlayerCore: ObservableObject {
             activateSessionIfNeeded()
             
             DispatchQueue.main.async { onReady?() }
+            print("✅ [loadWithPlayer] 加载完成，等待播放")
+
         } catch {
-            debugLog("❌ 加载音频失败: \(error)")
+            print("❌ [loadWithPlayer] 加载失败: \(error)")
+                    print("   - error domain: \(error._domain), code: \(error._code)")
             DispatchQueue.main.async { onReady?() }
         }
     }
     
     private func loadWithEngine(url: URL, onEnd: @escaping () -> Void, onReady: (() -> Void)?) {
+        print("🎵 [loadWithEngine] 开始加载: \(url.lastPathComponent)")
+
         do {
             let file = try AVAudioFile(forReading: url)
             let format = file.processingFormat
             let frameCount = AVAudioFrameCount(file.length)
+            
+            print("✅ [loadWithEngine] 成功读取 AVAudioFile")
+                    print("   - format.sampleRate: \(format.sampleRate)")
+                    print("   - format.channelCount: \(format.channelCount)")
+                    print("   - frameCount: \(frameCount)")
             
             // 1. 读取原始音频文件
             guard let originalBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frameCount) else {
@@ -366,7 +393,7 @@ class PlayerCore: ObservableObject {
             
             DispatchQueue.main.async { onReady?() }
         } catch {
-            debugLog("❌ 引擎加载失败: \(error)")
+            print("❌ [loadWithEngine] 加载失败: \(error)")
             DispatchQueue.main.async { onReady?() }
         }
     }
@@ -402,22 +429,71 @@ class PlayerCore: ObservableObject {
     
     // MARK: - 播放控制
     func play() {
+        print("▶️ [PlayerCore.play] 被调用")
+            print("   - avPlayer: \(avPlayer != nil ? "存在" : "nil")")
+            print("   - audioPlayer: \(audioPlayer != nil ? "存在" : "nil")")
+            print("   - scheduledBuffer: \(scheduledBuffer != nil ? "存在" : "nil")")
+            print("   - enableEffects: \(enableEffects)")
         if let avPlayer = avPlayer {
+            print("▶️ [PlayerCore.play] → 使用 AVPlayer")
+
             avPlayer.play()
             isPlaying = true
             startProgressTimer()
             return
         }
-        if enableEffects { playWithEngine() } else { playWithPlayer() }
+        if enableEffects {
+            print("▶️ [PlayerCore.play] → 使用 playWithEngine")
+            
+            playWithEngine()
+        } else {
+            print("▶️ [PlayerCore.play] → 使用 playWithPlayer")
+
+            playWithPlayer()
+        }
     }
     
     private func playWithPlayer() {
-        guard let player = audioPlayer, !isAtEnd else { return }
-        if player.play() {
+        guard let player = audioPlayer else {
+            print("❌ [playWithPlayer] audioPlayer 为 nil")
+            return
+        }
+        guard !isAtEnd else {
+            print("⚠️ [playWithPlayer] 已播放到末尾，isAtEnd=true")
+            return
+        }
+        
+        print("🎵 [playWithPlayer] 准备播放，当前时间: \(player.currentTime), 时长: \(player.duration)")
+        
+        let success = player.play()
+        if success {
             isPlaying = true
             startProgressTimer()
+            print("✅ [playWithPlayer] 播放成功")
+        } else {
+            print("❌ [playWithPlayer] player.play() 返回 false")
+            // 尝试重置并重新播放
+            player.currentTime = 0
+            player.prepareToPlay()
+            let retrySuccess = player.play()
+            print("🔄 [playWithPlayer] 重置后重试播放: \(retrySuccess ? "成功" : "失败")")
+            if retrySuccess {
+                isPlaying = true
+                startProgressTimer()
+            }
         }
     }
+    
+//    private func playWithPlayer() {
+//        guard let player = audioPlayer, !isAtEnd else {
+//            print("❌ [playWithPlayer] audioPlayer 为 nil")
+//            return
+//        }
+//        if player.play() {
+//            isPlaying = true
+//            startProgressTimer()
+//        }
+//    }
     
     private func playWithEngine() {
         guard let buffer = scheduledBuffer, !isAtEnd else { return }

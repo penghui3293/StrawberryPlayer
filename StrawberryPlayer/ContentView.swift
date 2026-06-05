@@ -2,6 +2,11 @@ import SwiftUI
 import UIKit
 import Network
 
+// MARK: - 通知扩展（确保与 UserService 中定义的一致）
+//extension Notification.Name {
+//    static let needReLogin = Notification.Name("needReLogin")
+//}
+
 struct ContentView: View {
     @StateObject private var userService = UserService()
     @StateObject private var libraryService = LibraryService()
@@ -18,9 +23,7 @@ struct ContentView: View {
     @State private var isCheckingNetworkPermission = true
     @State private var isNetworkPermissionGranted = false
     
-    // 在 ContentView 中添加状态变量
     @State private var isPresentingFullPlayer = false
-    
     
     init() {
         let appearance = UITabBarAppearance()
@@ -81,6 +84,13 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { newPhase in
             guard newPhase == .active else { return }
+            if userService.isLoggedIn, let exp = userService.tokenExpiration,
+               Date().timeIntervalSince1970 + 300 >= exp {
+                Task {
+                    try? await userService.refreshAccessToken(silent: true)
+                    print("🔄 前台主动预刷新 Access Token")
+                }
+            }
             if !isNetworkPermissionGranted && !isCheckingNetworkPermission {
                 checkNetworkPermission()
             }
@@ -115,6 +125,9 @@ struct ContentView: View {
         .environmentObject(lyricsService)
         .environmentObject(virtualArtistService)
         .onAppear {
+            // 配置 AITaskManager 共享的 UserService
+            AITaskManager.shared.configure(userService: userService)
+            
             virtualArtistService.userService = userService
             playbackService.userService = userService
             playbackService.libraryService = libraryService
@@ -124,11 +137,25 @@ struct ContentView: View {
                 playbackService.syncFavorites()
             }
             
+            // 监听退出登录通知（原有逻辑）
             NotificationCenter.default.addObserver(
                 forName: .userDidLogout,
                 object: nil,
                 queue: .main
             ) { _ in
+                isLoginPresented = true
+                AITaskManager.shared.stopPolling()
+            }
+            
+            // ✅ 新增：监听 Token 刷新失败（需要重新登录）通知
+            NotificationCenter.default.addObserver(
+                forName: .needReLogin,
+                object: nil,
+                queue: .main
+            ) { _ in
+                // 确保清除本地登录状态，避免残留
+                userService.logout()
+                // 弹出登录页
                 isLoginPresented = true
             }
             
@@ -138,10 +165,8 @@ struct ContentView: View {
                 }
             }
             
-            // 启动时检查本地网络权限
             checkNetworkPermission()
             
-            // ✅ 在这里插入冷启动链接处理代码
             if let url = deepLinkHandler.pendingURL {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                     playbackService.handleUniversalLink(url: url)
@@ -157,6 +182,44 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .presentFullPlayer)) { _ in
             guard playbackService.playerUIMode == .full else { return }
             presentFullPlayerWithRetry(attempt: 0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .aiSongGenerationCompleted)) { notification in
+            guard let song = notification.object as? Song else { return }
+            print("🎉 新增歌曲: \(song.title), virtualArtistId: \(song.virtualArtistId?.uuidString ?? "nil")")
+
+            // ✅ 关键：将歌曲添加到本地曲库（如果尚未存在）
+            libraryService.addSong(song)
+            
+            // 弹窗询问是否立即播放
+            let alert = UIAlertController(
+                title: "歌曲生成完成",
+                message: "《\(song.title)》已生成，是否立即播放？",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "播放", style: .default) { _ in
+                playbackService.play(song: song, uiMode: .full)
+            })
+            alert.addAction(UIAlertAction(title: "稍后", style: .cancel))
+            if let rootVC = UIApplication.shared.connectedScenes
+                .compactMap({ ($0 as? UIWindowScene)?.windows.first(where: { $0.isKeyWindow }) })
+                .first?.rootViewController {
+                rootVC.present(alert, animated: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .aiSongGenerationFailed)) { notification in
+            let taskId = notification.object as? String ?? ""
+            // 可显示一个本地通知或弹窗告知用户生成失败
+            let alert = UIAlertController(
+                title: "歌曲生成失败",
+                message: "任务 \(taskId) 出错，请重试。",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "确定", style: .default))
+            if let rootVC = UIApplication.shared.connectedScenes
+                .compactMap({ ($0 as? UIWindowScene)?.windows.first(where: { $0.isKeyWindow }) })
+                .first?.rootViewController {
+                rootVC.present(alert, animated: true)
+            }
         }
     }
     
@@ -195,7 +258,7 @@ struct ContentView: View {
                     .tag(2)
                     .environmentObject(userService)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)  // ✅ 强制填满屏幕
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .toolbar(isTabBarHidden ? .hidden : .visible, for: .tabBar)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -218,22 +281,17 @@ struct ContentView: View {
         }
     }
     
-    
-    // 同步版：用于 dismiss 等场景（最早的稳定版本）
     private func getRootViewController() -> UIViewController? {
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return nil }
-        // 查找第一个 windowLevel 为 normal 且有 rootViewController 的窗口
         let normalWindow = windowScene.windows.first(where: {
             $0.windowLevel == .normal && $0.rootViewController != nil
         })
         if let rootVC = normalWindow?.rootViewController {
             return rootVC
         }
-        // 极少数情况 fallback：任何有 rootViewController 的窗口
         return windowScene.windows.first(where: { $0.rootViewController != nil })?.rootViewController
     }
     
-    // 同步版（用于全屏弹出，避免阻塞）
     private func getRootViewControllerAsync(completion: @escaping (UIViewController?) -> Void) {
         func attempt(_ tries: Int) {
             guard tries < 10 else {
@@ -254,9 +312,7 @@ struct ContentView: View {
         attempt(0)
     }
     
-    
     private func presentFullPlayerWithRetry(attempt: Int = 0) {
-        // 最多重试 3 次
         guard attempt < 3 else {
             print("❌ 全屏播放器弹出失败，已达最大重试次数")
             playbackService.playerUIMode = .mini
@@ -268,7 +324,6 @@ struct ContentView: View {
         guard !isPresentingFullPlayer else { return }
         isPresentingFullPlayer = true
         
-        // 设置超时保护：2 秒后强制重置标志
         let timeoutWork = DispatchWorkItem {
             if self.isPresentingFullPlayer {
                 print("⚠️ 弹出全屏超时，强制重置标志")
@@ -335,7 +390,6 @@ struct ContentView: View {
         }
         return false
     }
-    
 }
 
 struct MiniPlayerContainer: View {
@@ -360,5 +414,3 @@ extension UIViewController {
         return self
     }
 }
-
-

@@ -1,13 +1,3 @@
-//
-//  LyricsView.swift
-//  Player
-//
-//  Created by penghui zhang on 2026/2/15.
-//
-
-// LyricsView.swift
-
-
 import SwiftUI
 
 struct LyricsView: View {

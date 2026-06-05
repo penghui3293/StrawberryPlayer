@@ -238,6 +238,15 @@ class LibraryService: ObservableObject {
         }
     }
     
+    func addSong(_ song: Song) {
+        if !songs.contains(where: { $0.id == song.id }) {
+            songs.append(song)
+            // 可选：持久化到本地数据库，这里仅更新内存数组
+            NotificationCenter.default.post(name: .songsDidChange, object: nil)
+            print("✅ [LibraryService] 新增歌曲: \(song.title)")
+        }
+    }
+    
     private func saveLyricsToFile(lyrics: String, forSongId: String) -> URL? {
         let fileName = "\(forSongId).lrc"
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -301,66 +310,6 @@ class LibraryService: ObservableObject {
         }
     }
     
-    // MARK: - 从 Navidrome 加载数据
-    func loadFromNavidrome() async {
-        guard NavidromeService.shared.isAuthenticated else {
-            debugLog("⚠️ Navidrome 未认证")
-            return
-        }
-        
-        DispatchQueue.main.async { self.isScanningCloud = true }
-        do {
-            let albums = try await NavidromeService.shared.getAlbumList(limit: 50)
-            var allSongs: [Song] = []
-            
-            for album in albums {
-                let songs = try await NavidromeService.shared.getAlbum(id: album.id)
-                for song in songs {
-                    if let streamURL = NavidromeService.shared.getStreamURL(songId: song.id) {
-                        var coverData: Data? = nil
-                        if let coverArtId = song.coverArt ?? album.coverArt,
-                           let coverURL = NavidromeService.shared.getCoverArtURL(coverArtId: coverArtId, size: 300) {
-                            if let (data, _) = try? await URLSession.shared.data(from: coverURL) {
-                                if data.count < 60000 {
-                                    coverData = data
-                                    debugLog("✅ 保留封面，大小: \(data.count)")
-                                } else {
-                                    coverData = nil
-                                    debugLog("❌ 丢弃默认封面，大小: \(data.count)")
-                                }
-                            }
-                        }
-                        
-                        let newSong = Song(
-                            id: song.id,
-                            title: song.title,
-                            artist: song.artist,
-                            album: song.album,
-                            duration: TimeInterval(song.duration ?? 0),
-                            audioUrl: streamURL.absoluteString,
-                            coverUrl: nil,
-                            lyrics: nil,
-                            virtualArtist: nil,
-                            creatorId: nil,
-                            isUserGenerated: false,
-                            wordLyrics: nil,
-                            createdAt: nil,
-                            style: nil
-                        )
-                        allSongs.append(newSong)
-                    }
-                }
-            }
-            DispatchQueue.main.async {
-                self.songs = allSongs
-                self.dataSource = .online
-                self.isScanningCloud = false
-            }
-        } catch {
-            debugLog("❌ 从 Navidrome 加载失败: \(error)")
-            DispatchQueue.main.async { self.isScanningCloud = false }
-        }
-    }
     
     // MARK: - 导入 iCloud 文件夹
     func importFolderFromCloud(at cloudURL: URL, completion: @escaping (Bool) -> Void) {

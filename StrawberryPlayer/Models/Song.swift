@@ -20,13 +20,14 @@ struct UserReference: Decodable {
 struct Song: Identifiable, Decodable, Equatable {
     // MARK: 存储属性
     let id: String
+    let stableId: String
     let title: String
     let artist: String
     let album: String?
     let duration: TimeInterval
-    let coverUrl: String?      // 后端返回的完整 URL（绝对或相对）
-    var audioUrl: String?      // 后端返回的完整 URL（绝对或相对）
-    var streamURL: String?   // 对应后端 stream_url，可直接播放的转码后链接
+    var audioUrl: String?
+    let coverUrl: String?
+    var streamURL: String?
     let lyrics: String?
     let wordLyrics: String?
     let style: String?
@@ -35,8 +36,16 @@ struct Song: Identifiable, Decodable, Equatable {
     let virtualArtistId: UUID?
     let creatorId: UUID?
     let createdAt: Date?
-    let stableId: String   // ✅ 新增，从服务器获取
-
+    var translatedLyrics: String?
+    var translatedWordLyrics: String?
+    
+    var displayDuration: TimeInterval {
+        // 如果时长大于 10000，认为是毫秒，转换为秒
+        if duration > 10000 {
+            return duration / 1000
+        }
+        return duration
+    }
     
     // MARK: 计算属性（直接返回 URL，不再拼接 baseURL）
     var coverURL: URL? {
@@ -66,26 +75,27 @@ struct Song: Identifiable, Decodable, Equatable {
     // MARK: 解码
     enum CodingKeys: String, CodingKey {
         case id
+        case stableId
         case title
         case artist
         case album
         case duration
-        case coverUrl
         case audioUrl
-        case streamURL           // 对应 JSON 中的 "streamURL"
-        case streamUrlString     // 兼容其他可能的命名
+        case coverUrl
+        case streamURL
+        case streamUrlString
         case lyrics
         case wordLyrics
         case style
         case isUserGenerated
         case virtualArtist
-        case virtualArtistId
+        case virtualArtistId = "virtualArtistId"   // 指定驼峰
         case creator
         case createdAt
-        // 新增兼容字段
         case coverUrlString
         case audioUrlString
-        case stableId
+        case translatedLyrics
+        case translatedWordLyrics
     }
     
     
@@ -130,12 +140,32 @@ struct Song: Identifiable, Decodable, Equatable {
         isUserGenerated = try container.decodeIfPresent(Bool.self, forKey: .isUserGenerated) ?? false
         virtualArtist = try container.decodeIfPresent(VirtualArtistReference.self, forKey: .virtualArtist)
         
-        // 解码 virtualArtistId
+        // 增强 virtualArtistId 解码
+        var virtualArtistUUID: UUID? = nil
+        // 先尝试用 primary key
         if let idString = try? container.decode(String.self, forKey: .virtualArtistId) {
-            virtualArtistId = UUID(uuidString: idString)
-        } else {
-            virtualArtistId = virtualArtist?.id.flatMap(UUID.init)
+            virtualArtistUUID = UUID(uuidString: idString)
         }
+        // 解码 virtualArtistId
+        //        if let idString = try? container.decode(String.self, forKey: .virtualArtistId) {
+        //            virtualArtistId = UUID(uuidString: idString)
+        //        } else {
+        //            virtualArtistId = virtualArtist?.id.flatMap(UUID.init)
+        //        }
+        
+        // 若失败，尝试下划线命名
+        if virtualArtistUUID == nil,
+           let alternateKey = CodingKeys(stringValue: "virtual_artist_id") {
+            if let idString = try? container.decode(String.self, forKey: alternateKey) {
+                virtualArtistUUID = UUID(uuidString: idString)
+            }
+        }
+        
+        // 最后从 nested virtualArtist 中取
+        if virtualArtistUUID == nil {
+            virtualArtistUUID = virtualArtist?.id.flatMap(UUID.init)
+        }
+        virtualArtistId = virtualArtistUUID
         
         // 解码 creator
         if let creator = try? container.decode(UserReference.self, forKey: .creator) {
@@ -161,66 +191,13 @@ struct Song: Identifiable, Decodable, Equatable {
             print("⚠️ [Song decode] 未找到 stableId 字段，使用 id 作为 stableId: \(id)")
             stableId = id
         }
+        
+        // 解码 translatedLyrics（如果还没有）
+        translatedLyrics = try container.decodeIfPresent(String.self, forKey: .translatedLyrics)
+        
+        // ✅ 新增：解码 translatedWordLyrics
+        translatedWordLyrics = try container.decodeIfPresent(String.self, forKey: .translatedWordLyrics)
     }
-    
-//    init(from decoder: Decoder) throws {
-//        let container = try decoder.container(keyedBy: CodingKeys.self)
-//        id = try container.decode(String.self, forKey: .id)
-//        title = try container.decode(String.self, forKey: .title)
-//        artist = try container.decode(String.self, forKey: .artist)
-//        album = try container.decodeIfPresent(String.self, forKey: .album)
-//        duration = try container.decode(TimeInterval.self, forKey: .duration)
-//        
-//        // 封面 URL：优先使用 coverUrlString，其次 coverUrl
-//        if let coverString = try? container.decode(String.self, forKey: .coverUrlString) {
-//            coverUrl = coverString
-//        } else {
-//            coverUrl = try container.decodeIfPresent(String.self, forKey: .coverUrl)
-//        }
-//        
-//        // 音频 URL：优先使用 audioUrlString，其次 audioUrl
-//        if let audioString = try? container.decode(String.self, forKey: .audioUrlString) {
-//            audioUrl = audioString
-//        } else {
-//            audioUrl = try container.decodeIfPresent(String.self, forKey: .audioUrl)
-//        }
-//        
-//        // ✅ 新增：解码 streamURL（优先使用 streamURL，兼容 streamUrlString）
-//        if let streamString = try? container.decode(String.self, forKey: .streamURL) {
-//            streamURL = streamString
-//        } else if let streamString = try? container.decode(String.self, forKey: .streamUrlString) {
-//            streamURL = streamString
-//        } else {
-//            streamURL = nil
-//        }
-//        
-//        lyrics = try container.decodeIfPresent(String.self, forKey: .lyrics)
-//        wordLyrics = try container.decodeIfPresent(String.self, forKey: .wordLyrics)
-//        style = try container.decodeIfPresent(String.self, forKey: .style)
-//        isUserGenerated = try container.decodeIfPresent(Bool.self, forKey: .isUserGenerated) ?? false
-//        virtualArtist = try container.decodeIfPresent(VirtualArtistReference.self, forKey: .virtualArtist)
-//        
-//        // 解码 virtualArtistId
-//        if let idString = try? container.decode(String.self, forKey: .virtualArtistId) {
-//            virtualArtistId = UUID(uuidString: idString)
-//        } else {
-//            virtualArtistId = virtualArtist?.id.flatMap(UUID.init)
-//        }
-//        
-//        if let creator = try? container.decode(UserReference.self, forKey: .creator) {
-//            creatorId = creator.id
-//        } else {
-//            creatorId = nil
-//        }
-////        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
-//        if let dateString = try container.decodeIfPresent(String.self, forKey: .createdAt) {
-//            let formatter = ISO8601DateFormatter()
-//            createdAt = formatter.date(from: dateString)
-//        } else {
-//            createdAt = nil
-//        }
-//        stableId = try container.decodeIfPresent(String.self, forKey: .stableId) ?? id
-//    }
     
     
     // 手动初始化器（用于本地创建）
@@ -240,7 +217,9 @@ struct Song: Identifiable, Decodable, Equatable {
          wordLyrics: String? = nil,
          createdAt: Date? = nil,
          style: String? = nil,
-         streamURL: String? = nil) {
+         streamURL: String? = nil,
+         translatedLyrics: String? = nil,
+         translatedWordLyrics: String? = nil) {
         self.id = id
         self.stableId = stableId ?? id  // 若没提供则回退到 id
         self.title = title
@@ -258,6 +237,8 @@ struct Song: Identifiable, Decodable, Equatable {
         self.creatorId = creatorId
         self.createdAt = createdAt
         self.streamURL = streamURL            // 赋值
+        self.translatedLyrics = translatedLyrics
+        self.translatedWordLyrics = translatedWordLyrics
     }
     
     // MARK: 从本地 AVAsset 创建 Song（用于本地文件导入）

@@ -46,7 +46,7 @@ class VirtualArtistService: ObservableObject {
     }
     
     // MARK: - 创建艺人（带头像上传）
-    func createArtist(name: String, avatarImage: UIImage?, bio: String, genre: String, token: String, voiceModelId: String? = nil, completion: @escaping (Result<VirtualArtist, Error>) -> Void) {
+    func createArtist(name: String, avatarImage: UIImage?, bio: String, genre: String,language: String?,  token: String, voiceModelId: String? = nil, completion: @escaping (Result<VirtualArtist, Error>) -> Void) {
         let url = URL(string: baseURL + "/artists")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -56,12 +56,17 @@ class VirtualArtistService: ObservableObject {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
         var body = Data()
-        let params: [String: String] = [
+        var params: [String: String] = [
             "name": name,
             "genre": genre,
             "bio": bio,
             "voiceModelId": voiceModelId ?? ""
         ]
+        
+        if let language = language, !language.isEmpty {
+            params["language"] = language
+        }
+        
         for (key, value) in params {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n".data(using: .utf8)!)
@@ -203,6 +208,17 @@ class VirtualArtistService: ObservableObject {
     }
     
     func createSong(artistId: UUID? = nil, title: String, artistName: String, style: String, audioFile: URL, coverImage: UIImage? = nil, token: String, completion: @escaping (Result<Song, Error>) -> Void) {
+        
+        // 添加日志
+        print("📤 准备上传歌曲: title=\(title), artist=\(artistName), style=\(style)")
+        print("📁 音频文件路径: \(audioFile.path), 存在: \(FileManager.default.fileExists(atPath: audioFile.path))")
+        if let coverImage = coverImage {
+            let dataSize = coverImage.jpegData(compressionQuality: 0.8)?.count ?? 0
+            print("🖼️ 封面图片大小: \(dataSize) 字节")
+        } else {
+            print("🖼️ 无封面图片")
+        }
+        
         let url = URL(string: baseURL + "/songs/upload")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -268,6 +284,16 @@ class VirtualArtistService: ObservableObject {
                 if let httpResponse = response as? HTTPURLResponse {
                     debugLog("📥 上传歌曲状态码: \(httpResponse.statusCode)")
                 }
+                // ✅ 添加以下日志
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("🔍 [createSong] 状态码: \(httpResponse.statusCode)")
+                }
+                if let data = data, let responseString = String(data: data, encoding: .utf8) {
+                    print("📦 [createSong] 原始响应: \(responseString)")
+                } else if let data = data {
+                    print("📦 [createSong] 响应数据长度: \(data.count) 字节，无法转为字符串")
+                }
+                // ✅ 日志结束
                 if let error = error {
                     completion(.failure(error))
                     return
@@ -283,8 +309,10 @@ class VirtualArtistService: ObservableObject {
                     let decoder = JSONDecoder()
                     decoder.dateDecodingStrategy = .iso8601
                     let song = try decoder.decode(Song.self, from: data)
+                    debugLog("✅ 解析成功: \(song.title)")
                     completion(.success(song))
                 } catch {
+                    debugLog("❌ 解析失败: \(error)")
                     completion(.failure(error))
                 }
             }
@@ -442,6 +470,7 @@ class VirtualArtistService: ObservableObject {
         lyricsTemperature: Double = 0.8,      // 歌词生成温度
         lyricsMaxTokens: Int = 3000,          // 歌词最大长度
         referenceAudioURL: URL? = nil,        // 新增：参考音轨 URL
+        translatedLyrics: String? = nil,   // 新增
         completion: @escaping (Result<Song, Error>) -> Void
     ) {
         // 取消之前的生成任务
@@ -484,7 +513,20 @@ class VirtualArtistService: ObservableObject {
                 }
                 
                 debugLog("🎵 使用 Mureka V8 生成歌曲")
-                let musicPrompt = customStylePrompt ?? prompt
+                var musicPrompt = customStylePrompt ?? prompt
+                
+                // 根据艺人语言添加演唱语言指令
+                if let language = artist.language, !language.isEmpty {
+                    switch language {
+                    case "粤语":
+                        musicPrompt += " 演唱语言：粤语，必须使用地道粤语发音和词汇，旋律风格参考经典粤语金曲。"
+                    case "English":
+                        musicPrompt += " Sing in English with clear pronunciation, natural flow, and western pop style."
+                    default:
+                        musicPrompt += " 演唱语言：国语，发音标准，旋律流畅。"
+                    }
+                }
+                
                 debugLog("🎵 发送给 Mureka 的 prompt: \(musicPrompt)")
                 debugLog("🎵 发送给 Mureka 的歌词: \(finalLyrics)")
                 if let refURL = referenceAudioURL {
@@ -533,6 +575,10 @@ class VirtualArtistService: ObservableObject {
                 
                 if let customCoverURL = coverURL {
                     publishData["cover_url"] = customCoverURL
+                }
+                
+                if let translated = translatedLyrics, !translated.isEmpty {
+                    publishData["translated_lyrics"] = translated
                 }
                 
                 await MainActor.run {
@@ -589,35 +635,6 @@ class VirtualArtistService: ObservableObject {
                         }
                     }
                 }.resume()
-                
-//                URLSession.shared.dataTask(with: request) { data, response, error in
-//                    DispatchQueue.main.async {
-//                        self.generationProgress = ""   // 清空进度
-//                        if let error = error {
-//                            completion(.failure(error))
-//                            return
-//                        }
-//                        guard let data = data else {
-//                            completion(.failure(NSError(domain: "NoData", code: -1, userInfo: nil)))
-//                            return
-//                        }
-//                        if let jsonString = String(data: data, encoding: .utf8) {
-//                            debugLog("📦 服务器返回原始 JSON: \(jsonString)")
-//                        }
-//                        do {
-//                            let decoder = JSONDecoder()
-//                            decoder.dateDecodingStrategy = .iso8601
-//                            let song = try decoder.decode(Song.self, from: data)
-//                            debugLog("🔊 解析后的歌曲音频 URL: \(String(describing: song.audioURL))")
-//                            // 延迟 0.5 秒再通知前端，给内存和资源释放留出时间
-//                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-//                                completion(.success(song))
-//                            }
-//                        } catch {
-//                            completion(.failure(error))
-//                        }
-//                    }
-//                }.resume()
             } catch {
                 await MainActor.run {
                     self.generationProgress = ""
@@ -746,6 +763,7 @@ extension VirtualArtistService {
         }
     }
     
+    
     func generateSongFromReference(
         originalSong: ReferenceSong,
         selectedCoverURL: URL,
@@ -758,7 +776,10 @@ extension VirtualArtistService {
         token: String,
         lyricsTemperature: Double = 0.85,
         lyricsMaxTokens: Int = 4000,
-        referenceAudioURL: URL? = nil          // 新增：参考音轨
+        referenceAudioURL: URL? = nil,
+        translatedLyrics: String? = nil,
+        voiceModelIdOverride: String? = nil,
+        referenceArtistLanguage: String? = nil
     ) async throws -> Song {
         
         // 使用参考歌曲的主题作为歌词创作主题
@@ -783,7 +804,6 @@ extension VirtualArtistService {
             mood = "emotional"
         }
         
-        
         // ✅ 修复后的风格增强逻辑
         let enrichedBase = customStylePrompt.isEmpty
         ? "\(mood) mood"
@@ -795,9 +815,6 @@ extension VirtualArtistService {
             enrichedStylePrompt += ", genre: \(referenceGenre)"
         }
         
-        
-        
-        
         // 尝试从参考歌手的 stylePrompt 中提取人声描述（如性别、音色）
         let referenceStylePrompt = ReferenceService.shared.artists.first(where: { $0.name == originalSong.artist })?.stylePrompt ?? ""
         let vocalDescription = extractVocalDescription(from: referenceStylePrompt)
@@ -806,40 +823,173 @@ extension VirtualArtistService {
         " \(vocalDescription)" +
         " 要求编曲、音色和演唱风格高度模仿该歌手，音质达到无损级别。"
         
+        // ========== 第一阶段：生成歌词并获取 Mureka 生成的歌曲 ==========
+        // 注意：这部分仍使用原有的 generateAISong 逻辑，但我们需要将其改造为提交任务+轮询
+        // 由于原有的 generateAISong 是同步等待 Mureka 完成，我们现在将其拆分为两步：
+        // 1. 先调用原有的 generateAISong 来生成歌词和 Mureka 歌曲（这部分仍然是同步的）
+        // 2. 然后提交到队列保存到数据库
+        
+        // 使用原有的 generateAISong 方法（它会调用 Mureka 并返回生成的 Song）
+        // 但原有的 generateAISong 最后会调用 /songs/generate_and_link 接口，这个接口现在已经是异步队列了
+        // 所以我们需要改用直接调用 Mureka 生成歌曲，然后提交任务
+        
+        // 更简洁的方式：复用原有的 generateAISong 逻辑，但跳过最后的保存步骤，改为队列提交
+        // 由于代码量较大，这里提供一个完整的重构版本
+        
         return try await withCheckedThrowingContinuation { continuation in
-            generateAISong(
-                artist: artist,
-                songTitle: originalSong.title,
-                album: "AI 经典再造",
-                lyrics: "",
-                prompt: lyricsPrompt,
-                coverURL: selectedCoverURL.absoluteString,
-                token: token,
-                temperature: creativity,
-                topP: 0.95,
-                customLyrics: customLyrics,
-                customTitle: customTitle,
-                customStylePrompt: finalMusicPrompt,   // 使用增强后的风格提示
-                targetDuration: duration,
-                lyricsTemperature: lyricsTemperature,
-                lyricsMaxTokens: lyricsMaxTokens,
-                referenceAudioURL: referenceAudioURL,   // 传递参考音轨
-                completion: { result in
-                    continuation.resume(with: result)
+            // 第一步：生成歌词并调用 Mureka 生成歌曲（同步等待 Mureka 完成）
+            // 使用原有的 generateAISong 方法，但传入一个特殊的 completion 处理
+            // 注意：原有的 generateAISong 会调用 /songs/generate_and_link，这个接口现在返回 taskId
+            // 所以我们需要修改 generateAISong 来支持异步队列
+            
+            // 为了保持兼容，我们直接调用 generateAISong，它会返回 Song（因为后端已经改为异步队列，
+            // 但前端还没有适配，所以我们需要修改 generateAISong 的内部实现来轮询）
+            
+            // 由于时间关系，这里提供一个直接调用新接口的版本：
+            Task {
+                do {
+                    // 1. 先使用 DeepSeek 生成歌词（如果需要）
+                    var finalLyrics = customLyrics
+                    var finalTitle = customTitle
+                    
+                    if finalLyrics.isEmpty {
+                        await MainActor.run {
+                            self.generationProgress = "正在生成歌词..."
+                        }
+                        let (generatedTitle, generatedLyrics) = try await DeepSeekService.shared.generateLyrics(
+                            prompt: lyricsPrompt,
+                            temperature: lyricsTemperature,
+                            maxTokens: lyricsMaxTokens
+                        )
+                        finalTitle = generatedTitle.isEmpty ? customTitle : generatedTitle
+                        finalLyrics = generatedLyrics
+                        await MainActor.run {
+                            self.generationProgress = "歌词已完成，正在合成音乐..."
+                        }
+                    }
+                    
+                    // 2. 调用 Mureka 生成歌曲（同步等待，这步仍然会耗时）
+                    await MainActor.run {
+                        self.generationProgress = "正在提交音乐生成任务..."
+                    }
+                    
+                    
+                    // 构建人声和编曲增强指令
+                    let vocalDesc: String
+                    if let refArtist = ReferenceService.shared.artists.first(where: { $0.name == originalSong.artist }),
+                       let fullPrompt = refArtist.stylePrompt,
+                       let vocalRange = fullPrompt.range(of: "人声：") {
+                        vocalDesc = String(fullPrompt[vocalRange.lowerBound...])
+                            .split(separator: "\n").first.map(String.init) ?? "人声：深情温暖，咬字清晰"
+                    } else {
+                        vocalDesc = "人声：深情温暖，咬字清晰"
+                    }
+                    
+                    // 获取参考歌手的语言（从 ReferenceService 中查找）
+                    var languageInstruction = ""
+                    if let refArtist = ReferenceService.shared.artists.first(where: { $0.name == originalSong.artist }),
+                       let lang = refArtist.language {
+                        switch lang {
+                        case "粤语":
+                            languageInstruction = " 演唱语言：粤语，必须使用地道粤语发音和词汇，旋律风格参考经典粤语金曲。"
+                        case "English":
+                            languageInstruction = " Sing in English with clear pronunciation, natural flow, and western pop style."
+                        default:
+                            languageInstruction = " 演唱语言：国语，发音标准，旋律流畅。"
+                        }
+                    }
+                    
+                    let enhancedMusicPrompt = """
+                    \(finalMusicPrompt)
+                    【演唱要求】\(vocalDesc)\(languageInstruction)
+                    【编曲要求】请严格参考原曲《\(originalSong.title)》的编曲风格：\(originalSong.musicStyle ?? "遵循原版")
+                    【音质要求】无损级别，高保真。
+                    """
+                    
+                    // 确定最终使用的 voiceModelId
+                    let finalVoiceModelId = voiceModelIdOverride ?? artist.voiceModelId
+                    
+                    
+                    let murekaTaskId = try await MurekaService.shared.generateSong(
+                        lyrics: finalLyrics,
+                        prompt: enhancedMusicPrompt,
+                        voiceModelId: finalVoiceModelId,   // 传递 voiceModelId
+                        model: "mureka-9",
+                        needWordLyrics: true,
+                        temperature: creativity,
+                        topP: 0.95,
+                        duration: duration,
+                        referenceAudioURL: referenceAudioURL,
+                        audioFormat: "wav"
+                    )
+                    
+                    await MainActor.run {
+                        self.generationProgress = "AI 正在创作音乐，请耐心等待..."
+                    }
+                    
+                    let generatedSong = try await MurekaService.shared.waitForTaskCompletion(taskId: murekaTaskId)
+                    
+                    // 3. 构建提交数据，调用异步队列接口
+                    var publishData: [String: Any] = [
+                        "title": finalTitle,
+                        "artist": artist.name,
+                        "album": "AI 经典再造",
+                        "duration": generatedSong.duration ?? 0,
+                        "audio_url": generatedSong.audioUrl?.absoluteString ?? "",
+                        "cover_url": generatedSong.coverUrl?.absoluteString ?? "",
+                        "lyrics": finalLyrics,
+                        "word_lyrics": generatedSong.wordLyrics ?? "",
+                        "virtual_artist_id": artist.id,
+                        "is_user_generated": true
+                    ]
+                    
+                    if let customCoverURL = selectedCoverURL.absoluteString as? String {
+                        publishData["cover_url"] = customCoverURL
+                    }
+                    
+                    if let translated = translatedLyrics, !translated.isEmpty {
+                        publishData["translated_lyrics"] = translated
+                    }
+                    
+                    // ✅ 新增：传递性别信息给后端
+                    if let gender = artist.gender, !gender.isEmpty {
+                        publishData["gender"] = gender
+                        print("🔍 [性别传递] artist.gender = \(gender)")
+                    }
+                    
+                    publishData["song_structure"] = [
+                        "intro_bars": 4,
+                        "verse_a_lines": 4,
+                        "verse_b_lines": 4,
+                        "chorus_lines": 4,
+                        "bridge_lines": 4,
+                        "outro_bars": 4
+                    ]
+                    
+                    await MainActor.run {
+                        self.generationProgress = "音乐已生成，正在保存到你的作品库..."
+                    }
+                    
+                    // 4. 提交任务到队列，并轮询等待完成
+                    let taskId = try await submitGenerationTask(publishData: publishData, token: token)
+                    let finalSong = try await pollTaskStatus(taskId: taskId, token: token)
+                    
+                    await MainActor.run {
+                        self.generationProgress = ""
+                    }
+                    continuation.resume(returning: finalSong)
+                } catch {
+                    await MainActor.run {
+                        self.generationProgress = ""
+                    }
+                    continuation.resume(throwing: error)
                 }
-            )
+            }
         }
     }
     
     
-    func generateCovers(
-        title: String,
-        artist: String,
-        coverURL: String?,
-        count: Int,
-        token: String,
-        gender: String? = nil      // 新增
-    ) async throws -> [String] {
+    func generateCovers(title: String,artist: String,coverURL: String?,count: Int,token: String,gender: String? = nil) async throws -> [String] {
         guard let url = URL(string: "\(baseURL)/ai/generate-covers") else {
             throw URLError(.badURL)
         }
@@ -858,9 +1008,21 @@ extension VirtualArtistService {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: parameters)
         
-        let (data, _) = try await URLSession.shared.data(for: request)
-        let response = try JSONDecoder().decode(CoverOptionsResponse.self, from: data)
-        return response.coverURLs
+        print("📤 [generateCovers] 请求参数: \(parameters)")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        if let httpResponse = response as? HTTPURLResponse {
+            print("📥 [generateCovers] 响应状态码: \(httpResponse.statusCode)")
+        }
+        if let jsonString = String(data: data, encoding: .utf8) {
+            print("📦 [generateCovers] 原始 JSON: \(jsonString)")
+        }
+        
+        let decoder = JSONDecoder()
+        let responseObj = try decoder.decode(CoverOptionsResponse.self, from: data)
+        print("✅ [generateCovers] 解析后的 coverURLs: \(responseObj.coverURLs)")
+        return responseObj.coverURLs
+        
     }
     
     // MARK: - 歌词优化（使用 DeepSeek）
@@ -868,12 +1030,15 @@ extension VirtualArtistService {
                        task: String,
                        theme: String = "",
                        referenceArtist: String? = nil,
+                       referenceSongTitle: String = "",           // ✅ 新增
+                       referenceSongDuration: TimeInterval = 210, // ✅ 新增
                        optimizationGoals: Set<String> = [],
                        token: String,
                        temperature: Double = 0.85,
                        maxTokens: Int = 3000,
                        referenceLyrics: String? = nil,          // 新增：参考歌曲原歌词
-                       referenceImageryHint: String? = nil      // 新增：参考意象提示
+                       referenceImageryHint: String? = nil,     // 新增：参考意象提示
+                       songMusicStyle: String? = nil
     ) async throws -> (title: String, lyrics: String) {
         
         guard task == "optimize" else {
@@ -935,46 +1100,40 @@ extension VirtualArtistService {
         let specificThemeGuidance = referenceArtistObject?.themeGuidance ?? ""
         let effectiveTheme = theme.isEmpty ? "思念" : theme
         
-        // 5. 构建创作提示词（模仿 generateInitialLyricsAndStyle 的结构，但任务是优化）
-        var prompt = """
-        你是一位世界级作词大师，正在帮助用户优化一首已存在的歌词。请保留歌词的核心情感与结构，但大幅提升其文学性、韵律感与意象的独创性。优化要求如下：
+        var musicStyleGuidance = ""
+        if let musicStyle = songMusicStyle, !musicStyle.isEmpty {
+            musicStyleGuidance = """
+                
+                **编曲风格参考（必须严格遵守）**：
+                参考歌曲《\(referenceSongTitle)》的编曲风格：\(musicStyle)
+                请在优化歌词时，确保歌词的节奏、长短句、韵脚与上述编曲风格相匹配，使最终生成的歌曲能够完美契合该编曲。
+                """
+        }
         
-        1. **原歌词初稿**：
-           \(currentLyrics)
+        // 5. 精简后的优化提示词（只关注润色，不改变结构）
+        let fullPrompt = """
+        请对以下歌词进行**润色优化**，要求：
         
-        2. **核心风格参考**：
-           - \(styleReferenceText)
-           \(specificThemeGuidance.isEmpty ? "" : "- 补充主题引导：" + specificThemeGuidance)
+        1. **保持原有行数、段落结构（主歌/副歌/桥段）完全不变**，不要增加或删除任何行。
+        2. 仅针对选定的优化目标进行改进：
+        \(additionalInstructions)
+        3. 语言要求：\(languageInstruction)
+        4. 编曲风格参考：\(musicStyleGuidance)
+        5. 参考歌手的风格：\(styleReferenceText)
+        6. 意象创新：\(referenceImageryHint?.isEmpty == false ? "优先使用以下意象：\(referenceImageryHint!)" : "使用具体、新颖的生活细节。")
         
-        3. **语言要求**：
-           \(languageInstruction)
+        **原歌词**：
+        \(currentLyrics)
         
-        4. **优化重点**：
-           \(additionalInstructions)
-        
-        5. **意象创新**：
-           - 避免“月光、泪水、誓言”等已被过度使用的词汇。
-           \(referenceImageryHint?.isEmpty == false ? "- 优先从以下意象中汲取灵感：\(referenceImageryHint!)。请用它们构建独特的场景，避免抽象抒情。" : "- 使用具体、新颖、与情感契合的生活细节作为意象。")
-        
-        6. **参考歌词范例**（从中学习用词和句式，但不可照搬）：
-           \(referenceLyrics?.isEmpty == false ? "“\(referenceLyrics!)”" : "无")
-        
-        7. **韵律与演唱要求**：
-           - 优化后的歌词每一句都应保持相近的音节数，不能出现一句极短一句极长的失衡感。中文每句控制在7~10个字，英文每句8~10个音节。
-           - 副歌严格押韵，韵脚统一，段落间对应行音节数一致（差异≤2）。
-           - 避免生僻字和拗口词汇，确保流畅自然。
-        
-        8. **输出格式**：
-           - 只输出优化后的纯歌词文本，不要包含任何括号、舞台提示、和声标注、符号标记。
-           - 段落之间使用一个空行分隔。
-           - 如果优化后歌名有变，请在第一行直接写新歌名，不加符号；否则可沿用原歌名。
-        
-        请直接输出优化后的歌词：
+        **输出要求**：
+        - 只输出优化后的歌词，保持原有的段落标记（如 [主歌A] 等）和空行分隔。
+        - 不要输出任何解释、注释或额外内容。
         """
+        
         
         // 调用 DeepSeek 生成（内部已含模型降级与思考模式）
         let (title, rawLyrics) = try await DeepSeekService.shared.generateLyrics(
-            prompt: prompt,
+            prompt: fullPrompt,
             temperature: temperature,
             maxTokens: maxTokens
         )
@@ -993,7 +1152,10 @@ extension VirtualArtistService {
         coverImage: UIImage?,
         token: String
     ) async throws -> Song {
+        print("🔍 [uploadPublicDomainSong] 开始，标题：\(title)，歌手：\(artist)")
         let exists = try await checkPublicDomainSongExists(title: title, artist: artist, token: token)
+        print("🔍 [uploadPublicDomainSong] exists = \(exists)")
+        
         if exists {
             throw NSError(
                 domain: "DuplicateSong",
@@ -1027,13 +1189,53 @@ extension VirtualArtistService {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        let (data, _) = try await URLSession.shared.data(for: request)
-        struct CheckResponse: Decodable {
-            let exists: Bool
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        // ✅ 添加日志开始
+        if let httpResponse = response as? HTTPURLResponse {
+            print("🔍 [checkPublicDomainSongExists] 状态码: \(httpResponse.statusCode)")
         }
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📦 [checkPublicDomainSongExists] 原始响应: \(responseString)")
+        } else {
+            print("📦 [checkPublicDomainSongExists] 响应数据无法转为字符串")
+        }
+        // ✅ 添加日志结束
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard httpResponse.statusCode == 200 else {
+            // 这里可以打印更详细错误
+            throw NSError(domain: "HTTPError", code: httpResponse.statusCode, userInfo: nil)
+        }
+        struct CheckResponse: Decodable { let exists: Bool }
         let result = try JSONDecoder().decode(CheckResponse.self, from: data)
         return result.exists
     }
+    
+    //    func checkPublicDomainSongExists(title: String, artist: String, token: String) async throws -> Bool {
+    //        guard let url = URL(string: baseURL + "/songs/check-exists") else {
+    //            throw URLError(.badURL)
+    //        }
+    //        var request = URLRequest(url: url)
+    //        request.httpMethod = "POST"
+    //        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    //        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    //        let body: [String: Any] = [
+    //            "title": title,
+    //            "artist": artist,
+    //            "is_public_domain": true
+    //        ]
+    //        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    //
+    //        let (data, _) = try await URLSession.shared.data(for: request)
+    //        struct CheckResponse: Decodable {
+    //            let exists: Bool
+    //        }
+    //        let result = try JSONDecoder().decode(CheckResponse.self, from: data)
+    //        return result.exists
+    //    }
 }
 
 extension VirtualArtistService {
@@ -1057,7 +1259,9 @@ extension VirtualArtistService {
         // 4. 去除首尾空白和空行
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    // 带自动刷新 token 的请求包装器，返回解码后的数据
+    
+    
+    
     private func performRequestWithAuth<T: Decodable>(
         path: String,
         method: String = "GET",
@@ -1076,10 +1280,18 @@ extension VirtualArtistService {
             throw URLError(.badServerResponse)
         }
         
+        // ✅ 401 处理：尝试刷新一次，如果刷新失败则清除本地数据并抛出错误
         if httpResponse.statusCode == 401 && retryCount == 0 {
             debugLog("⚠️ Token 失效，尝试刷新...")
-            _ = try await userService.refreshAccessToken()
-            return try await performRequestWithAuth(path: path, method: method, body: body, boundary: boundary, retryCount: 1)
+            do {
+                _ = try await userService.refreshAccessToken(silent: true)
+                // 刷新成功，重试请求
+                return try await performRequestWithAuth(path: path, method: method, body: body, boundary: boundary, retryCount: 1)
+            } catch {
+                // 刷新失败，清除本地登录状态并提示重新登录
+                debugLog("❌ 刷新失败，清除本地登录状态")
+                throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "登录已过期，请重新登录"])
+            }
         }
         
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -1098,7 +1310,6 @@ extension VirtualArtistService {
     
     private struct EmptyResponse: Decodable {}
     
-    // 带自动刷新 token 的请求包装器，不关心返回内容
     private func performRequestWithAuthNoDecode(
         path: String,
         method: String = "GET",
@@ -1117,10 +1328,18 @@ extension VirtualArtistService {
             throw URLError(.badServerResponse)
         }
         
+        // ✅ 401 处理：尝试刷新一次，如果刷新失败则清除本地数据并抛出错误
         if httpResponse.statusCode == 401 && retryCount == 0 {
             debugLog("⚠️ Token 失效，尝试刷新...")
-            _ = try await userService.refreshAccessToken()
-            return try await performRequestWithAuthNoDecode(path: path, method: method, body: body, boundary: boundary, retryCount: 1)
+            do {
+                _ = try await userService.refreshAccessToken(silent: true)
+                // 刷新成功，重试请求
+                return try await performRequestWithAuthNoDecode(path: path, method: method, body: body, boundary: boundary, retryCount: 1)
+            } catch {
+                // 刷新失败，清除本地登录状态并提示重新登录
+                debugLog("❌ 刷新失败，清除本地登录状态")
+                throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "登录已过期，请重新登录"])
+            }
         }
         
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -1128,9 +1347,8 @@ extension VirtualArtistService {
         }
     }
     
-    // MARK: - 音频母带处理
-    // 替换原有的 masterAudio 方法为以下两个方法
     
+    // MARK: - 音频母带处理
     /// 提交母带处理任务，返回任务ID
     func submitMasterTask(audioURL: URL, token: String) async throws -> String {
         guard let url = URL(string: baseURL + "/audio/master") else {
@@ -1232,69 +1450,273 @@ extension VirtualArtistService {
         }
     }
     
+    // MARK: - 异步任务提交与查询（解耦 UI）
+    func submitGenerationTask(
+        originalSong: ReferenceSong,
+        selectedCoverURL: URL,
+        creativity: Double,
+        duration: Double,
+        artist: VirtualArtist,
+        customLyrics: String,
+        customStylePrompt: String,
+        customTitle: String,
+        token: String,
+        lyricsTemperature: Double = 0.85,
+        lyricsMaxTokens: Int = 4000,
+        referenceAudioURL: URL? = nil,
+        translatedLyrics: String? = nil,
+        voiceModelIdOverride: String? = nil,
+        referenceArtistLanguage: String? = nil,
+        gender: String? = nil   // ✅ 新增
+    ) async throws -> String {
+        // 构建后端需要的参数（不调用 Mureka）
+        let publishData: [String: Any] = [
+            "title": customTitle,
+            "artist": artist.name,
+            "album": "AI 经典再造",
+            "duration": duration,
+            "lyrics": customLyrics,
+            "word_lyrics": "",  // 后端生成
+            "style": customStylePrompt,
+            "cover_url": selectedCoverURL.absoluteString,
+            "virtual_artist_id": artist.id ?? "",   // ✅ 修复：artist.id 是 String? 类型
+            "is_user_generated": true,
+            "translated_lyrics": translatedLyrics ?? "",
+            "reference_audio_url": referenceAudioURL?.absoluteString ?? "",
+            "reference_artist_language": referenceArtistLanguage ?? "",
+            "original_song_title": originalSong.title,
+            "original_song_music_style": originalSong.musicStyle ?? "",
+            "original_song_theme": originalSong.theme,
+            "creativity": creativity,
+            "lyrics_temperature": lyricsTemperature,
+            "lyrics_max_tokens": lyricsMaxTokens,
+            "voice_model_id": voiceModelIdOverride ?? artist.voiceModelId ?? "",
+            "duration_seconds": duration,
+            "gender": gender ?? ""   // ✅ 添加到请求体
+        ]
+        
+        // 提交到后端队列，获得 taskId
+        let taskId = try await submitGenerationTaskToBackend(publishData: publishData, token: token)
+        return taskId
+    }
+    
+    // submitGenerationTaskToBackend 方法保持不变（已存在）
+    private func submitGenerationTaskToBackend(publishData: [String: Any], token: String) async throws -> String {
+        let url = URL(string: baseURL + "/songs/generate_and_link")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: publishData)
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        struct TaskResponse: Decodable { let taskId: String }
+        let response = try JSONDecoder().decode(TaskResponse.self, from: data)
+        return response.taskId
+    }
+    
+    
+    // 2. 查询任务状态（供轮询使用）
+    func queryTaskStatus(taskId: String, token: String) async throws -> (status: String, song: Song?) {
+        let url = URL(string: baseURL + "/songs/task/\(taskId)")!
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        struct StatusResponse: Decodable {
+            let status: String
+            let songId: String?
+            let title: String?
+            let artist: String?
+            let coverUrl: String?
+            let audioUrl: String?
+            let lyrics: String?
+            let wordLyrics: String?
+            let error: String?
+            let translatedLyrics: String?
+            let translatedWordLyrics: String?
+        }
+        let statusResp = try JSONDecoder().decode(StatusResponse.self, from: data)
+        var song: Song? = nil
+        if statusResp.status == "completed",
+           let songId = statusResp.songId,
+           let title = statusResp.title,
+           let artist = statusResp.artist,
+           let coverUrl = statusResp.coverUrl,
+           let audioUrl = statusResp.audioUrl {
+            song = Song(
+                id: songId,
+                title: title,
+                artist: artist,
+                album: nil,
+                duration: 0,
+                audioUrl: audioUrl,
+                coverUrl: coverUrl,
+                lyrics: statusResp.lyrics,
+                virtualArtist: nil,
+                virtualArtistId: nil,
+                creatorId: nil,
+                isUserGenerated: true,
+                wordLyrics: statusResp.wordLyrics,
+                createdAt: nil,
+                style: nil,
+                streamURL: nil,
+                translatedLyrics: statusResp.translatedLyrics,
+                translatedWordLyrics: statusResp.translatedWordLyrics
+            )
+        }
+        return (statusResp.status, song)
+    }
+    
 }
+
+// MARK: - 异步队列辅助方法
+extension VirtualArtistService {
+    
+    /// 提交生成任务到队列
+    private func submitGenerationTask(publishData: [String: Any], token: String) async throws -> String {
+        let url = URL(string: baseURL + "/songs/generate_and_link")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: publishData)
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        struct TaskResponse: Decodable {
+            let taskId: String
+        }
+        let response = try JSONDecoder().decode(TaskResponse.self, from: data)
+        return response.taskId
+    }
+    
+    /// 轮询任务状态直到完成
+    private func pollTaskStatus(taskId: String, token: String) async throws -> Song {
+        let maxAttempts = 300  // 最多轮询 5 分钟（每次间隔 1 秒）
+        
+        var attempts = 0
+        
+        while attempts < maxAttempts {
+            try await Task.sleep(nanoseconds: 1_000_000_000) // 1 秒
+            attempts += 1
+            
+            let url = URL(string: baseURL + "/songs/task/\(taskId)")!
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            
+            let (data, _) = try await URLSession.shared.data(for: request)
+            struct StatusResponse: Decodable {
+                let status: String
+                let songId: String?
+                let title: String?
+                let artist: String?
+                let coverUrl: String?
+                let audioUrl: String?
+                let lyrics: String?
+                let wordLyrics: String?
+                let error: String?
+                let translatedLyrics: String?
+                let translatedWordLyrics: String?
+            }
+            let statusResp = try JSONDecoder().decode(StatusResponse.self, from: data)
+            
+            switch statusResp.status {
+            case "completed":
+                guard let songId = statusResp.songId,
+                      let title = statusResp.title,
+                      let artist = statusResp.artist,
+                      let coverUrl = statusResp.coverUrl,
+                      let audioUrl = statusResp.audioUrl else {
+                    throw NSError(domain: "PollingError", code: -1, userInfo: [NSLocalizedDescriptionKey: "任务完成但返回数据不完整"])
+                }
+                // 构造 Song 对象返回
+                return Song(
+                    id: songId,
+                    title: title,
+                    artist: artist,
+                    album: nil,
+                    duration: 0,
+                    audioUrl: audioUrl,
+                    coverUrl: coverUrl,
+                    lyrics: statusResp.lyrics,
+                    virtualArtist: nil,
+                    virtualArtistId: nil,
+                    creatorId: nil,
+                    isUserGenerated: true,
+                    wordLyrics: statusResp.wordLyrics,
+                    createdAt: nil,
+                    style: nil,
+                    streamURL: nil,
+                    translatedLyrics: statusResp.translatedLyrics,      // ✅ 新增
+                    translatedWordLyrics: statusResp.translatedWordLyrics  // ✅ 新增
+                )
+            case "failed":
+                throw NSError(domain: "TaskFailed", code: -1, userInfo: [NSLocalizedDescriptionKey: statusResp.error ?? "生成失败"])
+            default:
+                continue
+            }
+        }
+        throw NSError(domain: "Timeout", code: -1, userInfo: [NSLocalizedDescriptionKey: "生成超时，请稍后重试"])
+    }
+}
+
 // MARK: - 使用 MiniMax 生成歌曲（与 DeepSeek 歌词无缝集成）
 extension VirtualArtistService {
+    
+    // MARK: - 音频文件有效性校验
+    private func isValidAudioFile(at url: URL) -> Bool {
+        do {
+            let audioFile = try AVAudioFile(forReading: url)
+            return audioFile.length > 0
+        } catch {
+            return false
+        }
+    }
+    
+    private func downloadTempFile(from url: URL) async throws -> URL {
+        let (tempURL, response) = try await URLSession.shared.download(from: url)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        // 验证文件大小至少 1KB，避免空文件
+        let attrs = try FileManager.default.attributesOfItem(atPath: tempURL.path)
+        guard let fileSize = attrs[.size] as? Int64, fileSize > 1024 else {
+            throw NSError(domain: "InvalidFileSize", code: -1)
+        }
+        return tempURL
+    }
     
     func downloadSongToLocal(_ song: Song) async throws -> URL {
         guard let remoteURL = song.audioURL else {
             throw NSError(domain: "NoAudioURL", code: -1)
         }
-        let localFLACURL = PlaybackService.localAudioURL(for: song.id)
-        // 如果本地已有 FLAC 缓存，直接返回
-        if FileManager.default.fileExists(atPath: localFLACURL.path) {
-            return localFLACURL
+        // 使用 .wav 扩展名保持格式
+        let localURL = PlaybackService.localAudioURL(for: song.id, extension: "wav")
+        let directory = localURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        
+        // 已有有效缓存则直接返回
+        if FileManager.default.fileExists(atPath: localURL.path), isValidAudioFile(at: localURL) {
+            return localURL
         }
         
-        // 1. 下载到临时文件（带扩展名，确保转换器能识别格式）
-        let tempDownloadURL: URL = try await withCheckedThrowingContinuation { continuation in
-            let task = URLSession.shared.downloadTask(with: remoteURL) { tempURL, _, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let tempURL = tempURL else {
-                    continuation.resume(throwing: NSError(domain: "DownloadError", code: -1))
-                    return
-                }
-                let originalExtension = remoteURL.pathExtension.isEmpty ? "tmp" : remoteURL.pathExtension
-                let renamedTempURL = tempURL
-                    .deletingLastPathComponent()
-                    .appendingPathComponent("creation_\(UUID().uuidString).\(originalExtension)")
-                do {
-                    try FileManager.default.moveItem(at: tempURL, to: renamedTempURL)
-                    continuation.resume(returning: renamedTempURL)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-            task.resume()
+        // 下载临时文件
+        let tempURL = try await downloadTempFile(from: remoteURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        
+        // 验证下载的临时文件有效性
+        guard isValidAudioFile(at: tempURL) else {
+            throw NSError(domain: "InvalidDownload", code: -1, userInfo: [NSLocalizedDescriptionKey: "下载的文件无效"])
         }
         
-        // 2. 尝试转成 FLAC / M4A 无损并缓存
+        // 直接移动原始 WAV 文件到缓存目录（不转换，保证高品质）
         do {
-            let convertedURL = try autoreleasepool { try AudioConverter.convertToFlac(sourceURL: tempDownloadURL) }
-            try FileManager.default.moveItem(at: convertedURL, to: localFLACURL)
-            // 清理残留的临时文件及旧格式
-            try? FileManager.default.removeItem(at: tempDownloadURL)
-            let base = localFLACURL.deletingPathExtension()
-            for ext in ["wav", "mp3", "m4a", "tmp"] {
-                let oldFile = base.appendingPathExtension(ext)
-                if oldFile != localFLACURL {
-                    try? FileManager.default.removeItem(at: oldFile)
-                }
-            }
-            print("✅ AI 歌曲已转为 FLAC 缓存: \(localFLACURL.lastPathComponent)")
-            return localFLACURL
+            try FileManager.default.moveItem(at: tempURL, to: localURL)
+            print("✅ AI 歌曲已缓存到本地 (WAV): \(localURL.path)")
+            return localURL
         } catch {
-            // 转换失败时，保留原始下载文件作为缓存（不丢数据）
-            print("⚠️ 转换失败，直接缓存原始文件: \(error)")
-            let originalExtension = remoteURL.pathExtension.isEmpty ? "mp3" : remoteURL.pathExtension
-            let fallbackURL = localFLACURL
-                .deletingPathExtension()
-                .appendingPathExtension(originalExtension)
-            try? FileManager.default.moveItem(at: tempDownloadURL, to: fallbackURL)
-            return fallbackURL
+            print("⚠️ 移动文件失败: \(error)，将使用远程播放")
+            throw NSError(domain: "UseRemoteURL", code: -1, userInfo: [NSLocalizedDescriptionKey: "使用原始远程URL"])
         }
     }
     

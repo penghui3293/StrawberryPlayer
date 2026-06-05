@@ -56,12 +56,12 @@ struct MiniPlayerView: View {
                     .frame(width: 56, height: 56)
                     .contentShape(Circle())
                     .onTapGesture {
-                        // 延迟 0.1 秒，避免与 dismiss 动画冲突
+                        print("🎵 [MiniPlayerView] 封面被点击，准备切换到全屏")
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            print("🎵 [MiniPlayerView] 延迟后调用 setPlayerUIMode(.full)")
                             playbackService.setPlayerUIMode(.full)
                         }
                     }
-                    // 关闭按钮（增大点击区域）
                     Image(systemName: "xmark")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.gray)
@@ -71,6 +71,7 @@ struct MiniPlayerView: View {
                         .frame(width: 40, height: 40)  // 固定按钮区域
                         .contentShape(Circle())
                         .onTapGesture {
+                            print("❌ [MiniPlayerView] 关闭按钮被点击")
                             playbackService.setPlayerUIMode(.hidden)
                             playbackService.stop()
                         }

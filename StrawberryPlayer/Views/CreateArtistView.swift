@@ -18,6 +18,14 @@ struct CreateArtistView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
+    let languageMapping: [String: String] = [
+        "粤语流行": "粤语",
+        "国语流行": "国语",
+        "中国风": "国语",
+        "R&B": "English",        // 可选，默认英文
+        "欧美流行": "English"
+    ]
+    
     // 风格与虚拟艺人名称的映射，并配置与之匹配的头像占位图
     let styleMapping: [String: (name: String, defaultAvatarURL: URL?)] = [
         "粤语流行": (
@@ -150,11 +158,15 @@ struct CreateArtistView: View {
         guard let token = userService.currentToken else { return }
         isUploading = true
         
+        let language = languageMapping[selectedStyle]   // 根据当前风格获取语言
+
+        
         virtualArtistService.createArtist(
             name: artistName,
             avatarImage: avatarImage,
             bio: artistBio,
             genre: selectedStyle,
+            language: language,
             token: token
         ) { result in
             DispatchQueue.main.async {

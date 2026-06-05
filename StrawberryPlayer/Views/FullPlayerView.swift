@@ -341,22 +341,39 @@ struct FullPlayerView: View {
                 
                 
                 if translation.height > 0 {
-                    playbackService.playNext()
+                    playbackService.playNext(manual: true)
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 } else {
-                    playbackService.playPrevious()
+                    playbackService.playPrevious(manual: true)
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             }
     }
     
+    
     private func handleLyricsModeChange(_ newMode: LyricsDisplayMode) {
         print("🎵 lyricsMode changed to: \(newMode)")
+        
+        // ✅ 保存当前播放时间和歌词索引，用于切换后恢复
+        let savedTime = playbackService.currentTime
+        let savedOffset = lyricsService.lyricOffset
+        
         if newMode == .fullScreen {
             print("当前歌曲: \(playbackService.currentSong?.title ?? "nil")")
+            // ✅ 切换后延迟恢复歌词索引，确保视图已更新
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.lyricsService.updateCurrentIndex(with: savedTime + savedOffset)
+                // ✅ 强制刷新一次 UI
+                self.lyricsRefreshToken = UUID()
+                // ✅ 新增：通知全屏视图强制滚动
+                NotificationCenter.default.post(name: .forceScrollToCurrentLyric, object: nil)
+            }
         }
+        
         isTabBarHidden = (newMode == .fullScreen)
         setTabBarHidden(newMode == .fullScreen)
+        lastLyricsModeRaw = newMode.rawValue
+        
         DispatchQueue.main.async {
             UIApplication.shared.windows.first?.rootViewController?.view.setNeedsLayout()
         }
@@ -364,29 +381,31 @@ struct FullPlayerView: View {
     }
     
     private func handleCurrentSongChange(_ newSong: Song?) {
-        guard let song = newSong else {
-            // 歌曲变为 nil：保持 displayedSong 不变，避免 UI 空白
-            return
-        }
+        guard let song = newSong else { return }
+        print("🎬 [FullPlayer] handleCurrentSongChange | 歌曲: \(song.title) | hasTranslatedLyrics: \(song.translatedLyrics != nil) | hasTranslatedWordLyrics: \(song.translatedWordLyrics != nil)")
         
-        // 更新显示的歌曲信息
         displayedSong = song
+        playbackService.ensureAudioSessionIsActive()
         
-        // 如果歌词不属于当前歌曲，或者歌词为空，或者歌曲 ID 发生了变化 → 重新加载歌词
         let needReload = lyricsService.currentSongId != song.id || lyricsService.lyrics.isEmpty
         
         if needReload {
             print("🎵 [FullPlayerView] 加载歌词: \(song.title)")
             lyricsService.fetchLyrics(for: song, songDuration: song.duration)
+            
+            // ✅ 新增：等待歌词加载完成后强制刷新 UI
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if self.lyricsService.currentSongId == song.id && !self.lyricsService.lyrics.isEmpty {
+                    self.lyricsRefreshToken = UUID()
+                    print("✅ [FullPlayerView] 歌词加载完成，刷新 UI")
+                }
+            }
         } else {
-            // 同一首歌，但需要强制刷新 UI（DeepLink 场景下视图可能是全新的）
             print("🎵 [FullPlayerView] 同一首歌，刷新歌词索引: \(song.title)")
             lyricsService.updateCurrentIndex(with: playbackService.currentTime + lyricsService.lyricOffset)
-            // ✅ 强制触发一次 UI 刷新（通过修改 lyricsRefreshToken）
             lyricsRefreshToken = UUID()
         }
-                
-        // 加载分享数
+        
         playbackService.fetchShareCount(for: song)
     }
     
@@ -403,27 +422,29 @@ struct FullPlayerView: View {
     }
     
     private func handleOnAppear() {
+        print("🎬 [FullPlayer] onAppear | lyricsService.translatedWordLyrics行数: \(lyricsService.translatedWordLyrics.count) | isEnglishSong: \(lyricsService.translatedLyrics != nil)")
+        
         print("💾 [FullPlayerView appear] 内存: \(String(format: "%.1f", currentMemoryInMB())) MB")
-
+        
         // 缓存屏幕尺寸和安全区域
         screenSize = UIScreen.main.bounds.size
         safeAreaInsets = UIApplication.shared.windows.first?.safeAreaInsets ?? .zero
-
+        
         // 防御：确保服务状态为全屏
         if playbackService.playerUIMode != .full {
             playbackService.setPlayerUIMode(.full)
         }
-
+        
         // 恢复歌词模式
         if let mode = LyricsDisplayMode(rawValue: lastLyricsModeRaw) {
             lyricsMode = mode
         } else {
             lyricsMode = .fullScreen
         }
-
+        
         // 恢复歌词驱动
         lyricsService.resumeDriver()
-
+        
         if let song = playbackService.currentSong {
             // 先同步歌曲信息
             displayedSong = song
@@ -433,21 +454,21 @@ struct FullPlayerView: View {
         } else {
             lyricsService.reset()
         }
-
+        
         print("🎨 当前封面主色: \(playbackService.accentColor)")
-
+        
         // 禁用滑动手势 0.3 秒
         isGestureEnabled = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             isGestureEnabled = true
         }
-
+        
         NotificationCenter.default.addObserver(forName: NSNotification.Name("WechatShareSuccess"), object: nil, queue: .main) { _ in
             self.playbackService.shareCount += 1
             self.showShareSuccessAlert()
             self.showSharePanel = false
         }
-
+        
         memoryWarningToken = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
             .sink { [weak lyricsService] _ in
                 lyricsService?.clearAllParsedCache()
@@ -455,73 +476,17 @@ struct FullPlayerView: View {
             }
         
         // ✅ 关键修复：DeepLink 弹出后延迟刷新，确保所有绑定数据已到位
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let song = playbackService.currentSong {
-                    displayedSong = song
-                    handleCurrentSongChange(song)
-                    lyricsRefreshToken = UUID()
-                    print("🎵 [FullPlayerView] 延迟刷新完成，歌曲: \(song.title), 时长: \(playbackService.duration)")
-                }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let song = playbackService.currentSong {
+                displayedSong = song
+                handleCurrentSongChange(song)
+                lyricsRefreshToken = UUID()
+                print("🎵 [FullPlayerView] 延迟刷新完成，歌曲: \(song.title), 时长: \(playbackService.duration)")
             }
+        }
         
     }
     
-//    private func handleOnAppear() {
-//        print("💾 [FullPlayerView appear] 内存: \(String(format: "%.1f", currentMemoryInMB())) MB")
-//        
-//        // 缓存屏幕尺寸和安全区域，避免 body 中反复计算
-//        screenSize = UIScreen.main.bounds.size
-//        safeAreaInsets = UIApplication.shared.windows.first?.safeAreaInsets ?? .zero
-//        
-//        // 防御：确保服务状态为全屏
-//        if playbackService.playerUIMode != .full {
-//            playbackService.setPlayerUIMode(.full)
-//        }
-//        
-//        // 恢复歌词模式
-//        if let mode = LyricsDisplayMode(rawValue: lastLyricsModeRaw) {
-//            lyricsMode = mode
-//        } else {
-//            lyricsMode = .fullScreen
-//        }
-//        
-//        // ✅ 恢复歌词驱动
-//        lyricsService.resumeDriver()
-//        
-//        if let song = playbackService.currentSong {
-//            // 仅当歌词不属于当前歌曲，或歌词为空时才加载
-//            let needLoad = lyricsService.currentSongId != song.id || lyricsService.lyrics.isEmpty
-//            if needLoad && !lyricsService.isLoading {
-//                lyricsService.fetchLyrics(for: song, songDuration: song.duration)
-//            }
-//        } else {
-//            lyricsService.reset()   // 无歌曲时清空歌词
-//        }
-//        
-//        displayedSong = playbackService.currentSong
-//        
-//        print("🎨 当前封面主色: \(playbackService.accentColor)")
-//        
-//        
-//        // 禁用滑动手势 0.3 秒，避免打开动画期间误触
-//        isGestureEnabled = false
-//        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-//            isGestureEnabled = true
-//        }
-//        
-//        NotificationCenter.default.addObserver(forName: NSNotification.Name("WechatShareSuccess"), object: nil, queue: .main) { _ in
-//            self.playbackService.shareCount += 1
-//            self.showShareSuccessAlert()
-//            self.showSharePanel = false
-//        }
-//        
-//        memoryWarningToken = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
-//            .sink { [weak lyricsService] _ in
-//                lyricsService?.clearAllParsedCache()
-//                lyricsService?.reset()
-//            }
-//        
-//    }
     
     private func performCleanupAfterDisappear() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -668,7 +633,7 @@ struct FullPlayerView: View {
                             case .failure(let error): print("toggleFavorite failed: \(error)")
                             }
                         }
-                    }) {                        
+                    }) {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: playbackService.isFavorite(playbackService.currentSong ?? song) ? "heart.fill" : "heart")
                                 .font(.system(size: 22))
@@ -868,7 +833,6 @@ struct FullPlayerView: View {
                             switch result {
                             case .success:
                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                //                                playbackService.fetchLikeCount(for: song)
                             case .failure(let error):
                                 print("toggleFavorite failed: \(error)")
                             }
@@ -1124,11 +1088,11 @@ struct FullPlayerView: View {
                         
                         
                         // ✅ 新增：更新分享计数缓存
-                            let currentShares = SongMetricsCache.shared.get(songId: song.stableId)?.shares ?? 0
-                            SongMetricsCache.shared.set(songId: song.stableId, shares: currentShares + 1)
-                            if playbackService.currentSong?.stableId == song.stableId {
-                                playbackService.shareCount = currentShares + 1
-                            }
+                        let currentShares = SongMetricsCache.shared.get(songId: song.stableId)?.shares ?? 0
+                        SongMetricsCache.shared.set(songId: song.stableId, shares: currentShares + 1)
+                        if playbackService.currentSong?.stableId == song.stableId {
+                            playbackService.shareCount = currentShares + 1
+                        }
                     }
                     
                     self.showSharePanel = false
@@ -1151,17 +1115,17 @@ struct FullPlayerView: View {
             
             DispatchQueue.main.async {
                 ShareManager.shared.share(to: .weibo, text: shareText, image: cover, url: shareURL) { success in
-                    if success { 
+                    if success {
                         // 调用服务器增加分享数
                         playbackService.incrementShareCount(for: song)
                         self.playbackService.shareCount += 1
                         
                         // ✅ 新增：更新分享计数缓存
-                            let currentShares = SongMetricsCache.shared.get(songId: song.stableId)?.shares ?? 0
-                            SongMetricsCache.shared.set(songId: song.stableId, shares: currentShares + 1)
-                            if playbackService.currentSong?.stableId == song.stableId {
-                                playbackService.shareCount = currentShares + 1
-                            }
+                        let currentShares = SongMetricsCache.shared.get(songId: song.stableId)?.shares ?? 0
+                        SongMetricsCache.shared.set(songId: song.stableId, shares: currentShares + 1)
+                        if playbackService.currentSong?.stableId == song.stableId {
+                            playbackService.shareCount = currentShares + 1
+                        }
                     }
                     self.showSharePanel = false
                     ShareManager.shared.cleanupWeibo()
@@ -1281,7 +1245,6 @@ struct FullPlayerView: View {
         lyricsRefreshToken = UUID()
         
     }
-    
     
 }
 
@@ -1581,4 +1544,8 @@ extension UIImage {
         UIGraphicsEndImageContext()
         return image
     }
+}
+
+extension Notification.Name {
+    static let forceScrollToCurrentLyric = Notification.Name("forceScrollToCurrentLyric")
 }

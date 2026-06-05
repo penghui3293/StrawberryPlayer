@@ -232,6 +232,10 @@ struct UploadPublicMusicView: View {
             print("获取临时文件大小失败: \(error)")
         }
         
+        print("📁 上传文件: \(audioFile.lastPathComponent), 大小: \(fileSize(audioFile)) 字节")
+        print("📝 歌曲信息: 标题=\(songTitle), 艺术家=\(artist), 风格=\(selectedStyle), 时长=\(duration)")
+        
+        
         isUploading = true
         
         Task {
@@ -289,6 +293,17 @@ struct UploadPublicMusicView: View {
                     showError = true
                 }
             }
+        }
+    }
+    
+    // 辅助方法：获取文件大小
+    private func fileSize(_ url: URL) -> String {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let size = attributes[.size] as? Int64 ?? 0
+            return "\(size)"
+        } catch {
+            return "未知"
         }
     }
     

@@ -2,6 +2,8 @@ import UIKit
 
 class AppDelegate: UIResponder, UIApplicationDelegate {
     
+    var window: UIWindow?   // ✅ 关键修复：QQ SDK 需要此属性来展示 alert
+    
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
@@ -36,23 +38,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
     
     
-    /// 清理所有可能的 URL 缓存残留目录
-    private func removeLegacyCacheDirectories() {
-        let fileManager = FileManager.default
-        guard let cachesDir = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let contents = (try? fileManager.contentsOfDirectory(at: cachesDir,
-                                                             includingPropertiesForKeys: nil)) ?? []
-        for url in contents {
-            if url.lastPathComponent.hasPrefix("com.apple.nsurlsessiond") ||
-                url.lastPathComponent.contains("Ur lCache") ||
-                url.lastPathComponent.contains("strawberry_cache") {
-                try? fileManager.removeItem(at: url)
-                print("🧹 已移除损坏的缓存目录: \(url.lastPathComponent)")
-            }
-        }
-    }
-    
-    
+    // 处理 URL Scheme（QQ 回调）
     func application(_ app: UIApplication,
                      open url: URL,
                      options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
@@ -68,5 +54,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             return true
         }
         return false
+    }
+    
+    
+    /// 清理所有可能的 URL 缓存残留目录
+    private func removeLegacyCacheDirectories() {
+        let fileManager = FileManager.default
+        guard let cachesDir = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let contents = (try? fileManager.contentsOfDirectory(at: cachesDir,
+                                                             includingPropertiesForKeys: nil)) ?? []
+        for url in contents {
+            if url.lastPathComponent.hasPrefix("com.apple.nsurlsessiond") ||
+                url.lastPathComponent.contains("Ur lCache") ||
+                url.lastPathComponent.contains("strawberry_cache") {
+                try? fileManager.removeItem(at: url)
+                print("🧹 已移除损坏的缓存目录: \(url.lastPathComponent)")
+            }
+        }
     }
 }
