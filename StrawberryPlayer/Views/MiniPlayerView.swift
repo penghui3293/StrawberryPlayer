@@ -112,35 +112,29 @@ struct MiniPlayerView: View {
     
     @State private var rotationAngle: Double = 0
     @State private var rotationTimer: Timer?
+    @State private var coverImage: UIImage? = nil   // 新增：存储下载好的封面图
     
     var body: some View {
         if playbackService.isMiniPlayerVisible, !playbackService.showFullPlayer, let song = playbackService.currentSong {
-            // ✅ 使用 Button 包裹整个内容，点击任意区域（除了关闭按钮）都切换到全屏
             Button(action: {
-                print("🎵 [MiniPlayerView] 点击迷你播放器，切换到全屏")
                 playbackService.setPlayerUIMode(.full)
             }) {
                 HStack(spacing: 12) {
-                    // 封面区域
                     ZStack {
-                        if let coverURL = song.coverURL {
-                            AsyncImage(url: coverURL) { phase in
-                                if let image = phase.image {
-                                    image.resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                } else {
-                                    Circle().fill(Color.gray.opacity(0.5))
-                                }
-                            }
-                            .frame(width: 56, height: 56)
-                            .clipShape(Circle())
-                            .rotationEffect(.degrees(rotationAngle))
-                        } else {
-                            Circle().fill(Color.blue)
+                        if let image = coverImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
                                 .frame(width: 56, height: 56)
+                                .clipShape(Circle())
+                                .rotationEffect(.degrees(rotationAngle))
+                        } else {
+                            Circle()
+                                .fill(Color.gray.opacity(0.5))
+                                .frame(width: 56, height: 56)
+                                .overlay(ProgressView())
                         }
                         
-                        // 播放/暂停指示图标
                         Image(systemName: playbackService.isPlaying ? "pause.fill" : "play.fill")
                             .font(.title3)
                             .foregroundColor(.white)
@@ -154,9 +148,7 @@ struct MiniPlayerView: View {
                     
                     Spacer()
                     
-                    // ✅ 关闭按钮独立，避免触发父 Button
                     Button(action: {
-                        print("❌ [MiniPlayerView] 关闭按钮被点击")
                         playbackService.setPlayerUIMode(.hidden)
                         playbackService.stop()
                     }) {
@@ -173,10 +165,16 @@ struct MiniPlayerView: View {
                 .padding(8)
                 .background(Capsule().fill(.ultraThinMaterial).shadow(radius: 2))
             }
-            .buttonStyle(PlainButtonStyle())  // 移除默认高亮效果
+            .buttonStyle(PlainButtonStyle())
             .frame(width: 130, height: 70)
+            .id(song.id)   // ✅ 关键修复：强制每个歌曲独立视图
             .onAppear {
-                if playbackService.isPlaying { startRotation() }
+                print("🟢 [MiniPlayerView] onAppear, song: \(song.title), isPlaying: \(playbackService.isPlaying)")
+                loadCoverImage(for: song)
+                if playbackService.isPlaying {
+                    print("🎬 [MiniPlayerView] 启动旋转")
+                    startRotation()
+                }
             }
             .onDisappear {
                 stopRotation()
@@ -184,10 +182,63 @@ struct MiniPlayerView: View {
             .onChange(of: playbackService.isPlaying) { isPlaying in
                 if isPlaying { startRotation() } else { stopRotation() }
             }
+            .onChange(of: playbackService.currentSong) { newSong in
+                if let newSong = newSong {
+                    loadCoverImage(for: newSong)
+                }
+            }
         }
     }
+        
+    private func loadCoverImage(for song: Song) {
+        guard let coverURL = song.coverURL else {
+            print("❌ [loadCoverImage] coverURL 为空")
+            return
+        }
+        print("🌐 [loadCoverImage] 开始加载: \(coverURL)")
+        if let cached = ImageCacheManager.shared.image(for: coverURL) {
+            print("✅ [loadCoverImage] 缓存命中")
+            self.coverImage = cached
+            return
+        }
+        
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 10          // 缩短超时
+        let session = URLSession(configuration: config)
+        
+        var retryCount = 0
+        func attemptDownload() {
+            print("📡 [loadCoverImage] 下载尝试 \(retryCount+1)")
+            session.dataTask(with: coverURL) { data, _, error in
+                if let error = error {
+                    print("❌ 下载失败: \(error)")
+                    if retryCount < 2 {
+                        retryCount += 1
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+                            attemptDownload()
+                        }
+                    }
+                    return
+                }
+                guard let data = data, let image = UIImage(data: data) else {
+                    print("❌ 数据无效")
+                    return
+                }
+                let targetSize = CGSize(width: 120, height: 120)
+                let downsampled = image.preparingThumbnail(of: targetSize) ?? image
+                ImageCacheManager.shared.setImage(downsampled, for: coverURL)
+                DispatchQueue.main.async {
+                    self.coverImage = downsampled
+                    print("✅ 加载成功并缓存")
+                }
+            }.resume()
+        }
+        attemptDownload()
+    }
+    
     
     private func startRotation() {
+        print("🌀 [startRotation] 开始旋转")
         rotationTimer?.invalidate()
         rotationTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { _ in
             rotationAngle += 1
@@ -196,7 +247,9 @@ struct MiniPlayerView: View {
     }
     
     private func stopRotation() {
+        print("🛑 [stopRotation] 停止旋转")
         rotationTimer?.invalidate()
         rotationTimer = nil
     }
+    
 }

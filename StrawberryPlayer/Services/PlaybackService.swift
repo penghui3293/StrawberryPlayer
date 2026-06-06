@@ -475,6 +475,15 @@ class PlaybackService: ObservableObject {
             ShareManager.shared.cleanupTencent()
             ShareManager.shared.cleanupWeibo()
         }
+        
+        // ✅ 新增：监听迷你播放器手势通知        
+        NotificationCenter.default.addObserver(forName: .closeMiniPlayer, object: nil, queue: .main) { [weak self] _ in
+            self?.setPlayerUIMode(.hidden)
+            self?.stop()
+        }
+        NotificationCenter.default.addObserver(forName: .switchToFullPlayer, object: nil, queue: .main) { [weak self] _ in
+            self?.setPlayerUIMode(.full)
+        }
     }
     
     static func cleanLegacyFiles() {
