@@ -126,19 +126,19 @@ struct WordByWordLyricsView: View {
             syncWithCurrentLine()
         }
         .onReceive(lyricsService.$wordLyrics) { newValue in
-            print("🖥️ [WordByWord] 收到 wordLyrics 变化 | 新值行数: \(newValue.count)")
+//            print("🖥️ [WordByWord] 收到 wordLyrics 变化 | 新值行数: \(newValue.count)")
             syncWithCurrentLine()
         }
         .onReceive(lyricsService.$translatedWordLyrics) { newValue in
-            print("🖥️ [WordByWord] 收到 translatedWordLyrics 变化 | 新值行数: \(newValue.count)")
+//            print("🖥️ [WordByWord] 收到 translatedWordLyrics 变化 | 新值行数: \(newValue.count)")
             syncWithCurrentLine()
         }
         .onReceive(lyricsService.$translatedLines) { newValue in
-            print("🖥️ [WordByWord] 收到 translatedLines 变化 | 新值行数: \(newValue.count)")
+//            print("🖥️ [WordByWord] 收到 translatedLines 变化 | 新值行数: \(newValue.count)")
             syncWithCurrentLine()
         }
         .onReceive(lyricsService.$currentLyricIndex) { newIndex in
-            print("🖥️ [WordByWord] 收到 currentLyricIndex 变化: \(newIndex)")
+//            print("🖥️ [WordByWord] 收到 currentLyricIndex 变化: \(newIndex)")
             syncWithCurrentLine()
         }
         .onReceive(lyricsService.$currentSongId) { newIndex in
@@ -156,7 +156,7 @@ struct WordByWordLyricsView: View {
     }
     
     private func syncWithCurrentLine() {
-        print("🖥️ [WordByWord] syncWithCurrentLine 调用 | isLoading: \(lyricsService.isLoading) | wordLyrics行数: \(lyricsService.wordLyrics.count) | currentLyricIndex: \(lyricsService.currentLyricIndex)")
+//        print("🖥️ [WordByWord] syncWithCurrentLine 调用 | isLoading: \(lyricsService.isLoading) | wordLyrics行数: \(lyricsService.wordLyrics.count) | currentLyricIndex: \(lyricsService.currentLyricIndex)")
         if lyricsService.isLoading {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.syncWithCurrentLine()

@@ -33,7 +33,7 @@ struct TraditionalLyricsView: View {
                             .onAppear {
                                 if let song = playbackService.currentSong,
                                    !lyricsService.isLoading ,
-                                   !lyricsService.hasNoLyrics(for: song.id) {   // ✅ 新增条件
+                                   !lyricsService.hasNoLyrics(for: song.id) {   
                                     lyricsService.fetchLyrics(for: song)
                                 }
                             }
@@ -107,7 +107,7 @@ struct TraditionalLyricsView: View {
                                 
                                 // 英文歌曲：在每行歌词下方添加中文翻译
                                 if isEnglishSong {
-                                    let _ = print("📜 [Traditional] 渲染行 \(index)，isEnglishSong=\(isEnglishSong), translatedWordLyrics.count=\(lyricsService.translatedWordLyrics.count)")
+//                                    let _ = print("📜 [Traditional] 渲染行 \(index)，isEnglishSong=\(isEnglishSong), translatedWordLyrics.count=\(lyricsService.translatedWordLyrics.count)")
                                     
                                     if !lyricsService.translatedWordLyrics.isEmpty, index < lyricsService.translatedWordLyrics.count {
                                         let transWords = lyricsService.translatedWordLyrics[index]
@@ -116,17 +116,16 @@ struct TraditionalLyricsView: View {
                                             words: transWords,
                                             currentTime: playbackService.currentTime + lyricsService.lyricOffset,
                                             activeColor: .white,
-                                            inactiveColor: isCurrent ? Color.white.opacity(0.2) : inactiveColor,  // 当前行高亮，非当前行灰色
-                                            fontSize: 18,                  // ✅ 改为 18
+                                            inactiveColor: isCurrent ? Color.white.opacity(0.2) : inactiveColor,
+                                            fontSize: 18,
                                             containerWidth: containerWidth
                                         )
                                         .frame(width: containerWidth, height: transHeight)
                                         .padding(.horizontal, 16)
                                         .padding(.top, 4)
                                     } else if let transLine = lyricsService.translatedLines[safe: index] {
-                                        // 降级：静态翻译文本
                                         Text(transLine)
-                                            .font(.system(size: 18))        // ✅ 改为 18
+                                            .font(.system(size: 18))
                                             .foregroundColor(isCurrent ? .white.opacity(0.2) : inactiveColor)
                                             .padding(.horizontal, 16)
                                             .padding(.top, 2)
@@ -205,13 +204,13 @@ struct TraditionalLyricsView: View {
                 lyricsService.updateCurrentIndex(with: playbackService.currentTime + lyricsService.lyricOffset)
             }
             .onReceive(lyricsService.$wordLyrics) { newValue in
-                print("📜 [Traditional] 收到 wordLyrics 变化 | 行数: \(newValue.count)")
+//                print("📜 [Traditional] 收到 wordLyrics 变化 | 行数: \(newValue.count)")
             }
             .onReceive(lyricsService.$translatedWordLyrics) { newValue in
-                print("📜 [Traditional] 收到 translatedWordLyrics 变化 | 行数: \(newValue.count)")
+//                print("📜 [Traditional] 收到 translatedWordLyrics 变化 | 行数: \(newValue.count)")
             }
             .onReceive(lyricsService.$currentLyricIndex) { newIndex in
-                print("📜 [Traditional] 收到 currentLyricIndex 变化: \(newIndex)")
+//                print("📜 [Traditional] 收到 currentLyricIndex 变化: \(newIndex)")
                 
                 guard newIndex >= 0 else { return }
                 if let words = lyricsService.wordLyrics[safe: newIndex], !words.isEmpty {
@@ -224,9 +223,6 @@ struct TraditionalLyricsView: View {
                     }
                 }
                 self.scrollToCurrentLyric(using: proxy, animated: true)
-                //                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                //                    self.scrollToCurrentLyric(using: proxy, animated: true)
-                //                }
             }
         }
     }
@@ -244,19 +240,4 @@ struct TraditionalLyricsView: View {
         }
     }
     
-    //    private func scrollToCurrentLyric(using proxy: ScrollViewProxy, animated: Bool = true) {
-    //        let idx = lyricsService.currentLyricIndex
-    //        guard idx >= 0, idx < lyricsService.lyrics.count else { return }
-    //        let now = CACurrentMediaTime()
-    //        guard now - lastScrollTime >= 0.2 else { return }
-    //        lastScrollTime = now
-    //        lastScrolledTargetIndex = idx
-    //        if animated {
-    //            withAnimation(.easeOut(duration: 0.45)) {
-    //                proxy.scrollTo(idx, anchor: .top)
-    //            }
-    //        } else {
-    //            proxy.scrollTo(idx, anchor: .top)
-    //        }
-    //    }
 }

@@ -373,28 +373,6 @@ class PlaybackService: ObservableObject {
         }
     }
     
-//    private func updateMiniPlayerWindow() {
-//        DispatchQueue.main.async {
-//            let shouldShow = self.isMiniPlayerVisible && !self.showFullPlayer && self.allowMiniPlayerInCurrentPage
-//            if shouldShow {
-//                let userService = self.userService ?? UserService()   // 安全解包，避免崩溃
-//                let content = MiniPlayerContainer()
-//                    .environmentObject(self)
-//                    .environmentObject(self.lyricsService)
-//                    .environmentObject(userService)
-//                let hosting = UIHostingController(rootView: AnyView(content))
-//                hosting.view.backgroundColor = .clear
-//                MiniPlayerWindow.shared.rootViewController = hosting
-//                MiniPlayerWindow.shared.updateFrame()
-//                MiniPlayerWindow.shared.isHidden = false
-//            } else {
-//                MiniPlayerWindow.shared.isHidden = true
-//            }
-//            print("🪟 [MiniPlayerWindow] shouldShow = \(shouldShow), isHidden = \(MiniPlayerWindow.shared.isHidden)")
-//        }
-//    }
-    
-    
     func setAllowMiniPlayer(_ allowed: Bool) {
         allowMiniPlayerInCurrentPage = allowed
         updateMiniPlayerWindow()
