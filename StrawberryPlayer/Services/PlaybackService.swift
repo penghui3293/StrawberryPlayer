@@ -358,15 +358,13 @@ class PlaybackService: ObservableObject {
         DispatchQueue.main.async {
             let shouldShow = self.isMiniPlayerVisible && !self.showFullPlayer && self.allowMiniPlayerInCurrentPage
             if shouldShow {
-                let userService = self.userService ?? UserService()   // 安全解包，避免崩溃
+                let userService = self.userService ?? UserService()
                 let content = MiniPlayerContainer()
                     .environmentObject(self)
                     .environmentObject(self.lyricsService)
                     .environmentObject(userService)
-                let hosting = UIHostingController(rootView: AnyView(content))
-                hosting.view.backgroundColor = .clear
-                MiniPlayerWindow.shared.rootViewController = hosting
-                MiniPlayerWindow.shared.updateFrame()
+                // ✅ 关键：使用 configure 方法（会自动添加手势）
+                MiniPlayerWindow.configure(with: content)
                 MiniPlayerWindow.shared.isHidden = false
             } else {
                 MiniPlayerWindow.shared.isHidden = true
@@ -374,6 +372,27 @@ class PlaybackService: ObservableObject {
             print("🪟 [MiniPlayerWindow] shouldShow = \(shouldShow), isHidden = \(MiniPlayerWindow.shared.isHidden)")
         }
     }
+    
+//    private func updateMiniPlayerWindow() {
+//        DispatchQueue.main.async {
+//            let shouldShow = self.isMiniPlayerVisible && !self.showFullPlayer && self.allowMiniPlayerInCurrentPage
+//            if shouldShow {
+//                let userService = self.userService ?? UserService()   // 安全解包，避免崩溃
+//                let content = MiniPlayerContainer()
+//                    .environmentObject(self)
+//                    .environmentObject(self.lyricsService)
+//                    .environmentObject(userService)
+//                let hosting = UIHostingController(rootView: AnyView(content))
+//                hosting.view.backgroundColor = .clear
+//                MiniPlayerWindow.shared.rootViewController = hosting
+//                MiniPlayerWindow.shared.updateFrame()
+//                MiniPlayerWindow.shared.isHidden = false
+//            } else {
+//                MiniPlayerWindow.shared.isHidden = true
+//            }
+//            print("🪟 [MiniPlayerWindow] shouldShow = \(shouldShow), isHidden = \(MiniPlayerWindow.shared.isHidden)")
+//        }
+//    }
     
     
     func setAllowMiniPlayer(_ allowed: Bool) {
