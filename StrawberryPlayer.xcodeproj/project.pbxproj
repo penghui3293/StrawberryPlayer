@@ -66,6 +66,7 @@
 		1A75984B2F41673B00D8542E /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A75984A2F41673B00D8542E /* MediaPlayer.framework */; };
 		1A7CBF352F876EF600A2003E /* Common.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A7CBF342F876EF600A2003E /* Common.swift */; };
 		1A87B8882FAA35B600ABEC34 /* LocalNetworkPermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A87B8872FAA35B600ABEC34 /* LocalNetworkPermissionManager.swift */; };
+		1A8B2AA92FD80976009346E7 /* MiniPlayerUIKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A8B2AA82FD80976009346E7 /* MiniPlayerUIKitView.swift */; };
 		1A97A5BB2F4FB45D009845EF /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A97A5BA2F4FB45D009845EF /* KeychainHelper.swift */; };
 		1A97A5BD2F4FB49A009845EF /* LoginResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A97A5BC2F4FB49A009845EF /* LoginResponse.swift */; };
 		1A97A5BF2F4FB4BD009845EF /* User.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A97A5BE2F4FB4BD009845EF /* User.swift */; };
@@ -201,6 +202,7 @@
 		1A75984A2F41673B00D8542E /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		1A7CBF342F876EF600A2003E /* Common.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Common.swift; sourceTree = "<group>"; };
 		1A87B8872FAA35B600ABEC34 /* LocalNetworkPermissionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetworkPermissionManager.swift; sourceTree = "<group>"; };
+		1A8B2AA82FD80976009346E7 /* MiniPlayerUIKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerUIKitView.swift; sourceTree = "<group>"; };
 		1A97A5BA2F4FB45D009845EF /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		1A97A5BC2F4FB49A009845EF /* LoginResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginResponse.swift; sourceTree = "<group>"; };
 		1A97A5BE2F4FB4BD009845EF /* User.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = User.swift; sourceTree = "<group>"; };
@@ -396,6 +398,7 @@
 				1A7505092F737E1B003DDDA8 /* CachedAsyncImage.swift */,
 				1A121E322F8F5453002625EA /* MiniPlayerWindow.swift */,
 				1A45E9F62FA5B02E00138D1A /* LyricHighlightLayer.swift */,
+				1A8B2AA82FD80976009346E7 /* MiniPlayerUIKitView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -677,6 +680,7 @@
 				1AE8E3062F83DEA0003F1AF1 /* Extensions.swift in Sources */,
 				1ACAA9512F4DCE3D00116354 /* PlaylistView.swift in Sources */,
 				1A7598422F41615900D8542E /* LyricsParser.swift in Sources */,
+				1A8B2AA92FD80976009346E7 /* MiniPlayerUIKitView.swift in Sources */,
 				1A684FDF2F66A51F00C01D46 /* CoverMatcher.swift in Sources */,
 				1A62980D2F459ECC00B2BE75 /* LyricsModels.swift in Sources */,
 				1A7CBF352F876EF600A2003E /* Common.swift in Sources */,

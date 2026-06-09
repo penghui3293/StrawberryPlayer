@@ -53,7 +53,6 @@ struct MiniPlayerView: View {
             .padding(8)
             .background(Capsule().fill(.ultraThinMaterial).shadow(radius: 2))
             .frame(width: 130, height: 70)
-            .allowsHitTesting(false)   // ✅ 关键：让整个 SwiftUI 视图不拦截触摸
             .id(song.id)   // 强制刷新视图
             .onAppear {
                 loadCoverImage(for: song)

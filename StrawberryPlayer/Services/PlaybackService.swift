@@ -359,19 +359,37 @@ class PlaybackService: ObservableObject {
             let shouldShow = self.isMiniPlayerVisible && !self.showFullPlayer && self.allowMiniPlayerInCurrentPage
             if shouldShow {
                 let userService = self.userService ?? UserService()
-                let content = MiniPlayerContainer()
-                    .environmentObject(self)
-                    .environmentObject(self.lyricsService)
-                    .environmentObject(userService)
-                // ✅ 关键：使用 configure 方法（会自动添加手势）
-                MiniPlayerWindow.configure(with: content)
+                let miniView = MiniPlayerUIKitView(playbackService: self, lyricsService: self.lyricsService, userService: userService)
+                miniView.frame = CGRect(x: UIScreen.main.bounds.width - 130 - 16,
+                                        y: UIScreen.main.bounds.height - 70 - 200,
+                                        width: 130, height: 70)
+                MiniPlayerWindow.shared.rootViewController?.view.addSubview(miniView)
                 MiniPlayerWindow.shared.isHidden = false
             } else {
+                MiniPlayerWindow.shared.rootViewController?.view.subviews.forEach { $0.removeFromSuperview() }
                 MiniPlayerWindow.shared.isHidden = true
             }
-            print("🪟 [MiniPlayerWindow] shouldShow = \(shouldShow), isHidden = \(MiniPlayerWindow.shared.isHidden)")
         }
     }
+    
+//    private func updateMiniPlayerWindow() {
+//        DispatchQueue.main.async {
+//            let shouldShow = self.isMiniPlayerVisible && !self.showFullPlayer && self.allowMiniPlayerInCurrentPage
+//            if shouldShow {
+//                let userService = self.userService ?? UserService()
+//                let content = MiniPlayerContainer()
+//                    .environmentObject(self)
+//                    .environmentObject(self.lyricsService)
+//                    .environmentObject(userService)
+//                // ✅ 关键：使用 configure 方法（会自动添加手势）
+//                MiniPlayerWindow.configure(with: content)
+//                MiniPlayerWindow.shared.isHidden = false
+//            } else {
+//                MiniPlayerWindow.shared.isHidden = true
+//            }
+//            print("🪟 [MiniPlayerWindow] shouldShow = \(shouldShow), isHidden = \(MiniPlayerWindow.shared.isHidden)")
+//        }
+//    }
     
     func setAllowMiniPlayer(_ allowed: Bool) {
         allowMiniPlayerInCurrentPage = allowed
